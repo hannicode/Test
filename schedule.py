@@ -304,17 +304,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta charset="utf-8">
 <title>Class schedule</title>
 <style>
-body { font-family: system-ui, "Segoe UI", sans-serif; margin: 16px; color: #111; }
+body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 16px; color: #1a1a1a; }
 h1 { font-size: 20px; margin: 0 0 8px; }
 .timetable { display: grid; gap: 2px; margin: 0 0 16px; }
-.timetable .cell { border: 1px solid #999; font-size: 12px; padding: 3px; }
-.timetable .cell.time { background: #eee; color: #555; text-align: right; padding-right: 6px; }
-.timetable .cell.day { background: #eef; font-weight: bold; text-align: center; }
-.block { border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; overflow: hidden; padding: 4px; text-align: center; }
-.tooltip { position: fixed; display: none; background: #222; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 10; }
+.timetable .cell { border: 1px solid #d4d4d8; font-size: 12px; padding: 4px; }
+.timetable .cell.day { background: #eef1f6; font-weight: bold; text-align: center; }
+.timetable .cell.time { background: #f6f7f9; color: #666666; font-weight: 600; padding-right: 6px; text-align: right; }
+.block { border-radius: 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); display: flex; flex-direction: column; font-size: 11px; font-weight: 600; gap: 4px; justify-content: center; line-height: 1.2; padding: 8px 10px; text-align: center; }
+.block-course { font-size: 12px; font-weight: 700; }
+.block-info { color: #222222; font-size: 10px; font-weight: 500; }
+.tooltip { position: fixed; display: none; background: #222222; color: #ffffff; padding: 6px 8px; border-radius: 6px; font-size: 12px; pointer-events: none; z-index: 10; }
 table { border-collapse: collapse; margin-top: 8px; }
-th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; font-size: 12px; }
-th { background: #eef; }
+th, td { border: 1px solid #d4d4d8; padding: 4px 6px; text-align: left; font-size: 12px; }
+th { background: #eef1f6; font-weight: 600; }
 </style>
 </head>
 <body>

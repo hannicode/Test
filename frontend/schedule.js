@@ -5,11 +5,10 @@
 // PLACEMENTS in schedule.html; this file draws the page: a timetable grid
 // (main view) plus a table of the placed sections (below it).
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-// One color per course, in order of first appearance in PLACEMENTS.
+// One pastel color per course, in order of first appearance in PLACEMENTS.
 const PALETTE = [
-    "#4A90E2", "#50E3C2", "#B86CE3", "#F5A623", "#7ED321",
-    "#D0021B", "#9013FE", "#417505", "#F8E71C", "#8B572A",
-    "#00D1FF", "#FF9F1C",
+    "#BBDEFB", "#D1C4E9", "#C8E6C9", "#FFF3E0", "#FCE4EC",
+    "#E0F7FA", "#FFF9C4", "#E8EAF6", "#B2DFDB", "#F0F4C3",
 ];
 function dayIndex(day) {
     const idx = DAYS.indexOf(day);
@@ -65,42 +64,55 @@ function drawTimetable() {
     timet.className = "timetable";
     timet.style.display = "grid";
     timet.style.gridTemplateColumns = `60px repeat(${nDays}, 1fr)`;
-    timet.style.gridTemplateRows = `40px repeat(${nSlots}, 1fr)`;
+    timet.style.gridTemplateRows = `40px repeat(${nSlots}, 40px)`;
     timet.style.gap = "2px";
-    const header = document.createElement("div");
-    header.className = "row header";
+    // Corner cell (top-left, empty).
     const corner = document.createElement("div");
-    corner.className = "cell time";
-    header.appendChild(corner);
-    colDays.forEach((day) => {
+    corner.className = "cell";
+    corner.style.gridColumn = "1 / 2";
+    corner.style.gridRow = "1 / 2";
+    timet.appendChild(corner);
+    // Day-of-week headers across the top, one per day column.
+    colDays.forEach((day, i) => {
         const cell = document.createElement("div");
         cell.className = "cell day";
         cell.textContent = day;
-        header.appendChild(cell);
+        cell.style.gridColumn = `${2 + i} / ${3 + i}`;
+        cell.style.gridRow = "1 / 2";
+        timet.appendChild(cell);
     });
-    timet.appendChild(header);
+    // Time slots down the far-left column + empty cells in each day column
+    // (the empty cells carry no text - timestamps live only in the left column).
     for (let k = 0; k < nSlots; k++) {
-        const row = document.createElement("div");
-        row.className = "row";
+        const row = `${2 + k} / ${3 + k}`;
         const label = document.createElement("div");
         label.className = "cell time";
         label.textContent = slotLabel(GRID.start + k * GRID.slot_minutes);
-        row.appendChild(label);
+        label.style.gridColumn = "1 / 2";
+        label.style.gridRow = row;
+        timet.appendChild(label);
         for (let c = 0; c < nDays; c++) {
             const cell = document.createElement("div");
             cell.className = "cell";
-            row.appendChild(cell);
+            cell.style.gridColumn = `${2 + c} / ${3 + c}`;
+            cell.style.gridRow = row;
+            timet.appendChild(cell);
         }
-        timet.appendChild(row);
     }
+    // Blocks: one per placed section, spanning its actual start-to-end time
+    // vertically in its day column.
     const colors = colorsFor();
     PLACEMENTS.forEach((p) => {
+        const col = Math.max(colDays.indexOf(p.day), 0);
         const block = document.createElement("div");
         block.className = "block";
-        block.textContent = p.course_id;
-        block.style.background = colors.get(p.course_id) || "#888888";
-        block.style.gridColumn = `${2 + dayIndex(p.day)}`;
+        block.style.background = colors.get(p.course_id) || "#cccccc";
+        block.style.gridColumn = `${2 + col} / ${3 + col}`;
         block.style.gridRow = `${2 + slotIndex(p.start)} / ${2 + slotIndex(p.end)}`;
+        block.innerHTML =
+            `<div class="block-course">${escapeHtml(p.course_id)}</div>` +
+                `<div class="block-info">${slotLabel(p.start)} – ${slotLabel(p.end)} · ` +
+                `${escapeHtml(p.room_id)} · ${escapeHtml(p.instructor)}</div>`;
         timet.appendChild(block);
         attachTooltip(block, p);
     });
