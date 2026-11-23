@@ -1,0 +1,5 @@
+room_id,room_name,building,capacity
+R101,Room 101,Main Building,30
+R102,Room 102,Main Building,60
+R103,Room 103,Main Building,120
+R104,Room 104,East Wing,250

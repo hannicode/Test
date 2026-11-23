@@ -1,0 +1,11 @@
+section_id,course_id,course_name,instructor,capacity_needed,duration_minutes,allowed_days
+S101-L1,CS101,Intro to Computing,Dr. Lee,30,90,"Mon,Wed,Fri"
+S101-L2,CS101,Intro to Computing,Dr. Lee,30,90,"Tue,Thu"
+S102-L1,MATH101,Calculus I,Prof. Patel,25,60,"Mon,Wed,Fri"
+S102-L2,MATH101,Calculus I,Prof. Patel,25,60,"Tue,Thu"
+S201-L1,CS201,Data Structures,Dr. Kim,20,120,"Mon,Wed"
+S201-L2,CS201,Data Structures,Dr. Kim,20,120,"Tue,Thu"
+S302-L1,MATH202,Linear Algebra,Prof. Chen,15,90,"Mon,Wed,Fri"
+S302-L2,MATH202,Linear Algebra,Prof. Chen,15,90,"Tue,Thu"
+S401-L1,CS401,Algorithms,Dr. Okafor,10,120,"Wed,Fri"
+S401-L2,CS401,Algorithms,Dr. Okafor,10,120,"Tue,Thu"

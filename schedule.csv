@@ -1,0 +1,11 @@
+section_id,course_id,course_name,instructor,room_id,room_name,day,start,end
+S101-L1,CS101,Intro to Computing,Dr. Lee,R101,Room 101,Mon,07:00,08:30
+S102-L1,MATH101,Calculus I,Prof. Patel,R101,Room 101,Mon,08:30,09:30
+S201-L1,CS201,Data Structures,Dr. Kim,R101,Room 101,Mon,09:30,11:30
+S302-L1,MATH202,Linear Algebra,Prof. Chen,R101,Room 101,Mon,11:30,13:00
+S101-L2,CS101,Intro to Computing,Dr. Lee,R101,Room 101,Tue,07:00,08:30
+S102-L2,MATH101,Calculus I,Prof. Patel,R101,Room 101,Tue,08:30,09:30
+S201-L2,CS201,Data Structures,Dr. Kim,R101,Room 101,Tue,09:30,11:30
+S302-L2,MATH202,Linear Algebra,Prof. Chen,R101,Room 101,Tue,11:30,13:00
+S401-L2,CS401,Algorithms,Dr. Okafor,R101,Room 101,Tue,13:00,15:00
+S401-L1,CS401,Algorithms,Dr. Okafor,R101,Room 101,Wed,07:00,09:00
