@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Class schedule</title>
+<style>
+body { font-family: system-ui, "Segoe UI", sans-serif; margin: 16px; color: #111; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+.timetable { display: grid; gap: 2px; margin: 0 0 16px; }
+.timetable .cell { border: 1px solid #999; font-size: 12px; padding: 3px; }
+.timetable .cell.time { background: #eee; color: #555; text-align: right; padding-right: 6px; }
+.timetable .cell.day { background: #eef; font-weight: bold; text-align: center; }
+.block { border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; overflow: hidden; padding: 4px; text-align: center; }
+.tooltip { position: fixed; display: none; background: #222; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 10; }
+table { border-collapse: collapse; margin-top: 8px; }
+th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; font-size: 12px; }
+th { background: #eef; }
+</style>
+</head>
+<body>
+<h1>Class schedule</h1>
+<script>
+const GRID = {
+  "first_day": "Mon",
+  "last_day": "Sat",
+  "start": 420,
+  "end": 1260,
+  "slot_minutes": 30
+};
+const PLACEMENTS = [
+  {
+    "section_id": "S101-L1",
+    "course_id": "CS101",
+    "course_name": "Intro to Computing",
+    "instructor": "Dr. Lee",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Mon",
+    "start": 420,
+    "end": 510
+  },
+  {
+    "section_id": "S101-L2",
+    "course_id": "CS101",
+    "course_name": "Intro to Computing",
+    "instructor": "Dr. Lee",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Tue",
+    "start": 420,
+    "end": 510
+  },
+  {
+    "section_id": "S102-L1",
+    "course_id": "MATH101",
+    "course_name": "Calculus I",
+    "instructor": "Prof. Patel",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Mon",
+    "start": 510,
+    "end": 570
+  },
+  {
+    "section_id": "S102-L2",
+    "course_id": "MATH101",
+    "course_name": "Calculus I",
+    "instructor": "Prof. Patel",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Tue",
+    "start": 510,
+    "end": 570
+  },
+  {
+    "section_id": "S201-L1",
+    "course_id": "CS201",
+    "course_name": "Data Structures",
+    "instructor": "Dr. Kim",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Mon",
+    "start": 570,
+    "end": 690
+  },
+  {
+    "section_id": "S201-L2",
+    "course_id": "CS201",
+    "course_name": "Data Structures",
+    "instructor": "Dr. Kim",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Tue",
+    "start": 570,
+    "end": 690
+  },
+  {
+    "section_id": "S302-L1",
+    "course_id": "MATH202",
+    "course_name": "Linear Algebra",
+    "instructor": "Prof. Chen",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Mon",
+    "start": 690,
+    "end": 780
+  },
+  {
+    "section_id": "S302-L2",
+    "course_id": "MATH202",
+    "course_name": "Linear Algebra",
+    "instructor": "Prof. Chen",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Tue",
+    "start": 690,
+    "end": 780
+  },
+  {
+    "section_id": "S401-L1",
+    "course_id": "CS401",
+    "course_name": "Algorithms",
+    "instructor": "Dr. Okafor",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Wed",
+    "start": 420,
+    "end": 540
+  },
+  {
+    "section_id": "S401-L2",
+    "course_id": "CS401",
+    "course_name": "Algorithms",
+    "instructor": "Dr. Okafor",
+    "room_id": "R101",
+    "room_name": "Room 101",
+    "day": "Tue",
+    "start": 780,
+    "end": 900
+  }
+];
+</script>
+<script src="frontend/schedule.js"></script>
+</body>
+</html>

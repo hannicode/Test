@@ -24,13 +24,19 @@ Hard constraints (always hold):
     time on the same day.
 
 Only the Python standard library is used.
+
+After running, the CLI also writes a `schedule.html` page (see `--frontend`)
+that visualizes the schedule: a timetable grid plus a table of the placed
+sections.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import random
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -292,12 +298,100 @@ def write_schedule(placed, out_path: Path) -> None:
                              format_hhmm(p.start), format_hhmm(p.end)])
 
 
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Class schedule</title>
+<style>
+body { font-family: system-ui, "Segoe UI", sans-serif; margin: 16px; color: #111; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+.timetable { display: grid; gap: 2px; margin: 0 0 16px; }
+.timetable .cell { border: 1px solid #999; font-size: 12px; padding: 3px; }
+.timetable .cell.time { background: #eee; color: #555; text-align: right; padding-right: 6px; }
+.timetable .cell.day { background: #eef; font-weight: bold; text-align: center; }
+.block { border-radius: 4px; color: #fff; font-size: 11px; font-weight: bold; overflow: hidden; padding: 4px; text-align: center; }
+.tooltip { position: fixed; display: none; background: #222; color: #fff; padding: 6px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; z-index: 10; }
+table { border-collapse: collapse; margin-top: 8px; }
+th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; font-size: 12px; }
+th { background: #eef; }
+</style>
+</head>
+<body>
+<h1>Class schedule</h1>
+<script>
+const GRID = __GRID_JSON__;
+const PLACEMENTS = __PLACEMENTS_JSON__;
+</script>
+<script src="frontend/schedule.js"></script>
+</body>
+</html>
+"""
+
+
+def frontend_data(grid: Grid, placed: list[Placement]) -> dict:
+    """The solved schedule + grid, as JSON-able data for the generated page."""
+    return {
+        "grid": {
+            "first_day": DAYS[grid.first_day],
+            "last_day": DAYS[grid.last_day],
+            "start": grid.start,
+            "end": grid.end,
+            "slot_minutes": grid.slot_minutes,
+        },
+        "placements": [
+            {
+                "section_id": p.section.section_id,
+                "course_id": p.section.course_id,
+                "course_name": p.section.course_name,
+                "instructor": p.section.instructor,
+                "room_id": p.room.room_id,
+                "room_name": p.room.room_name,
+                "day": p.day,
+                "start": p.start,
+                "end": p.end,
+            }
+            for p in placed
+        ],
+    }
+
+
+def compile_frontend() -> None:
+    """Compile frontend/schedule.ts to frontend/schedule.js with the TypeScript compiler."""
+    try:
+        # On Windows, npx is a .cmd shim that CreateProcess cannot run directly,
+        # so go through cmd /c.
+        subprocess.run(["cmd", "/c", "npx", "-y", "--package=typescript", "tsc",
+                        "-p", "frontend/tsconfig.json"],
+                       check=True, capture_output=True)
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "The TypeScript front end needs Node.js/npx: install Node.js (nodejs.org) "
+            "and make sure 'npx' is on your PATH."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        out = ((e.stdout or b"") or (e.stderr or b"")).decode("utf-8", "replace")
+        raise RuntimeError("TypeScript compilation failed:\n" + out) from e
+
+
+def build_frontend(grid: Grid, placed: list[Placement], html_path: Path) -> None:
+    """Generate the double-clickable HTML page that visualizes the schedule."""
+    compile_frontend()
+    data = frontend_data(grid, placed)
+    html = (HTML_TEMPLATE
+            .replace("__GRID_JSON__", json.dumps(data["grid"], indent=2))
+            .replace("__PLACEMENTS_JSON__", json.dumps(data["placements"], indent=2)))
+    html_path.write_text(html, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Place course sections into rooms and time slots automatically.")
     parser.add_argument("--sections", default="data/sections.csv", help="sections CSV (default: data/sections.csv)")
     parser.add_argument("--rooms", default="data/rooms.csv", help="rooms CSV (default: data/rooms.csv)")
     parser.add_argument("--grid", default="data/grid.csv", help="time grid CSV (default: data/grid.csv)")
     parser.add_argument("--out", default="schedule.csv", help="output schedule CSV (default: schedule.csv)")
+    parser.add_argument("--frontend", default="schedule.html",
+                        help="output front-end HTML file (default: schedule.html; empty string to skip)")
     args = parser.parse_args()
 
     grid = read_grid(Path(args.grid))
@@ -307,8 +401,13 @@ def main() -> int:
     placed = solve(sections, rooms, grid)
     write_schedule(placed, Path(args.out))
 
+    if args.frontend:
+        build_frontend(grid, placed, Path(args.frontend))
+
     print(f"Placed {len(placed)}/{len(sections)} sections ({len(sections) - len(placed)} unplaced).")
     print(f"Schedule written to {args.out}.")
+    if args.frontend:
+        print(f"Front end written to {args.frontend}.")
     return 0
 
 
