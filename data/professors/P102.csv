@@ -1,0 +1,2 @@
+professor_id,name,preferred_days,preferred_start,preferred_end,availability_start,availability_end,max_sections
+P102,Prof. Patel,"Mon,Wed,Fri",08:30,16:30,07:00,20:00,4

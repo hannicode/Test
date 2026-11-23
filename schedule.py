@@ -28,6 +28,11 @@ Only the Python standard library is used.
 After running, the CLI also writes a `schedule.html` page (see `--frontend`)
 that visualizes the schedule: a timetable grid plus a table of the placed
 sections.
+
+Per-professor files live in `data/professors/` and per-subject files in
+`data/subjects/`; they shape the schedule: availability windows (hard
+constraints), professor preferences (soft score), and subject teaching-time
+defaults.
 """
 
 from __future__ import annotations
@@ -98,12 +103,46 @@ class Placement:
     end: int    # start + duration
 
 
+@dataclass
+class Professor:
+    """A professor from `data/professors/` — preference and availability data."""
+
+    name: str
+    preferred_days: list[str]    # days they prefer; blank = no preference
+    preferred_start: int         # earliest they like, minutes since midnight (0 = none)
+    preferred_end: int           # latest they like, minutes since midnight (0 = none)
+    availability_start: int      # hard window they are free (0 = no constraint)
+    availability_end: int        # hard window end (0 = no constraint)
+    max_sections: int            # most sections they can teach (0 = no cap)
+
+
+@dataclass
+class Subject:
+    """A subject from `data/subjects/` — teaching-time defaults for its sections."""
+
+    subject_id: str
+    course_name: str
+    default_duration_minutes: int
+    default_capacity: int
+
+
 def _to_int(text, default: int) -> int:
     """Parse an integer from a CSV cell; blank cells fall back to `default`."""
     text = (text or "").strip()
     if not text:
         return default
     return int(text)
+
+
+def _to_hhmm_or_zero(text) -> int:
+    """Parse an 'HH:MM' cell into minutes since midnight; blank/invalid -> 0."""
+    text = (text or "").strip()
+    if not text:
+        return 0
+    try:
+        return parse_hhmm(text)
+    except ValueError:
+        return 0
 
 
 def _day_index(text, path: Path) -> int:
@@ -168,6 +207,67 @@ def read_sections(path: Path) -> list[Section]:
     return sections
 
 
+def read_professors(directory: Path) -> list[Professor]:
+    """Read `data/professors/*.csv` — one file per professor."""
+    professors = []
+    if not directory.is_dir():
+        return professors
+    for path in sorted(directory.glob("*.csv")):
+        with path.open(newline="", encoding="utf-8") as f:
+            rows = [row for row in csv.DictReader(f) if any((v or "").strip() for v in row.values())]
+        if not rows:
+            continue
+        row = rows[0]
+        name = (row.get("name") or "").strip()
+        if not name:
+            continue
+        professors.append(Professor(
+            name=name,
+            preferred_days=[d.strip() for d in (row.get("preferred_days") or "").split(",") if d.strip()],
+            preferred_start=_to_hhmm_or_zero(row.get("preferred_start")),
+            preferred_end=_to_hhmm_or_zero(row.get("preferred_end")),
+            availability_start=_to_hhmm_or_zero(row.get("availability_start")),
+            availability_end=_to_hhmm_or_zero(row.get("availability_end")),
+            max_sections=_to_int(row.get("max_sections"), 0),
+        ))
+    return professors
+
+
+def read_subjects(directory: Path) -> dict[str, Subject]:
+    """Read `data/subjects/*.csv` — one file per subject, keyed by `subject_id`."""
+    subjects: dict[str, Subject] = {}
+    if not directory.is_dir():
+        return subjects
+    for path in sorted(directory.glob("*.csv")):
+        with path.open(newline="", encoding="utf-8") as f:
+            rows = [row for row in csv.DictReader(f) if any((v or "").strip() for v in row.values())]
+        if not rows:
+            continue
+        row = rows[0]
+        subject_id = (row.get("subject_id") or path.stem).strip()
+        if not subject_id:
+            continue
+        subjects[subject_id] = Subject(
+            subject_id=subject_id,
+            course_name=(row.get("course_name") or row.get("name") or "").strip(),
+            default_duration_minutes=_to_int(row.get("default_duration_minutes"), 0),
+            default_capacity=_to_int(row.get("default_capacity"), 0),
+        )
+    return subjects
+
+
+def apply_subject_defaults(sections: list[Section], subjects: dict[str, Subject]) -> None:
+    """Fill in blank duration/capacity on sections from the matching subject file."""
+    for section in sections:
+        subject = subjects.get(section.course_id)
+        if subject is None:
+            continue
+        if not section.duration_minutes and subject.default_duration_minutes:
+            section.duration_minutes = subject.default_duration_minutes
+        if not section.capacity_needed and subject.default_capacity:
+            section.capacity_needed = subject.default_capacity
+
+
 def section_days(section: Section, grid: Grid) -> list[str]:
     """The days the section can be placed on: allowed_days, else every grid day."""
     if not section.allowed_days:
@@ -176,8 +276,45 @@ def section_days(section: Section, grid: Grid) -> list[str]:
     return [d for d in grid.allowed_days() if d in wanted]
 
 
-def candidate_placements(section: Section, grid: Grid, rooms: list[Room]) -> list[Placement]:
-    """Every feasible (room, day, start) placement for the section."""
+def _professor_for(instructor: str, professors: dict[str, Professor]) -> Professor | None:
+    """Look up the professor record for a section's instructor name."""
+    return professors.get(instructor) if instructor else None
+
+
+def availability_ok(p: Placement, professors: dict[str, Professor]) -> bool:
+    """True if the placement is within the professor's availability window (if any)."""
+    prof = _professor_for(p.section.instructor, professors)
+    if prof is None:
+        return True
+    if prof.availability_start and prof.availability_end:
+        return p.start >= prof.availability_start and p.end <= prof.availability_end
+    return True
+
+
+def placement_penalty(p: Placement, professors: dict[str, Professor]) -> int:
+    """Soft preference score: 0 inside the professor's preferred window; outside
+    the window, the distance outside it (capped)."""
+    prof = _professor_for(p.section.instructor, professors)
+    if prof is None:
+        return 0
+    penalty = 0
+    if prof.preferred_days and p.day not in prof.preferred_days:
+        penalty += 60
+    if prof.preferred_start and prof.preferred_end:
+        if p.start >= prof.preferred_start and p.end <= prof.preferred_end:
+            pass  # inside the preferred window: no time penalty
+        else:
+            penalty += max(prof.preferred_start - p.start, 0) + max(p.end - prof.preferred_end, 0)
+    return min(penalty, 2 * 60)
+
+
+def candidate_placements(section: Section, grid: Grid, rooms: list[Room],
+                        professors: dict[str, Professor]) -> list[Placement]:
+    """Every feasible (room, day, start) placement for the section.
+
+    Placements outside the section's professor's availability window are
+    excluded (availability is a hard constraint).
+    """
     cands = []
     for day in section_days(section, grid):
         for k in range((grid.end - grid.start) // grid.slot_minutes + 1):
@@ -186,7 +323,10 @@ def candidate_placements(section: Section, grid: Grid, rooms: list[Room]) -> lis
                 break
             for room in rooms:
                 if room.capacity >= section.capacity_needed:
-                    cands.append(Placement(section, room, day, start, start + section.duration_minutes))
+                    cand = Placement(section, room, day, start, start + section.duration_minutes)
+                    if not availability_ok(cand, professors):
+                        continue
+                    cands.append(cand)
     return cands
 
 
@@ -230,14 +370,26 @@ def placement_has_conflicts(candidate: Placement, placed: list[Placement], skip_
     return n
 
 
-def greedy_schedule(sections, rooms, grid, rng) -> list[Placement]:
-    """Place the largest sections first, each into the first feasible slot."""
+def greedy_schedule(sections, rooms, grid, rng, professors) -> list[Placement]:
+    """Place the largest sections first.
+
+    Among feasible placements, picks the lowest soft preference penalty
+    (see `placement_penalty`), then the smallest room, earliest day,
+    earliest start.
+    """
     ordered = sorted(sections, key=lambda s: (-s.capacity_needed, -s.duration_minutes, s.section_id))
     placed: list[Placement] = []
     for section in ordered:
-        cands = candidate_placements(section, grid, rooms)
-        # Smallest fitting room, earliest day, earliest start; random tie-break.
-        cands.sort(key=lambda p: (p.room.capacity, DAYS.index(p.day), p.start, rng.random()))
+        # Professor cap (hard): skip sections whose professor is at max_sections.
+        if section.instructor:
+            prof = professors.get(section.instructor)
+            if prof and prof.max_sections:
+                placed_by_prof = sum(1 for p in placed if p.section.instructor == section.instructor)
+                if placed_by_prof >= prof.max_sections:
+                    continue
+        cands = candidate_placements(section, grid, rooms, professors)
+        cands.sort(key=lambda p: (placement_penalty(p, professors),
+                                  p.room.capacity, DAYS.index(p.day), p.start, rng.random()))
         for cand in cands:
             if placement_has_conflicts(cand, placed, section.section_id) == 0:
                 placed.append(cand)
@@ -269,14 +421,14 @@ def local_search(placed, candidate_map, max_passes: int = 50) -> list[Placement]
     return current
 
 
-def solve(sections, rooms, grid, restarts: int = 5, seed: int = 0) -> list[Placement]:
+def solve(sections, rooms, grid, professors, restarts: int = 5, seed: int = 0) -> list[Placement]:
     """Run greedy + local search a few times, keep the best schedule."""
     rng = random.Random(seed)
-    candidate_map = {s.section_id: candidate_placements(s, grid, rooms) for s in sections}
+    candidate_map = {s.section_id: candidate_placements(s, grid, rooms, professors) for s in sections}
     best = None
     best_key = None
     for _ in range(restarts):
-        placed = greedy_schedule(sections, rooms, grid, rng)
+        placed = greedy_schedule(sections, rooms, grid, rng, professors)
         placed = local_search(placed, candidate_map)
         key = (count_violations(placed), -len(placed))
         if best_key is None or key < best_key:
@@ -394,13 +546,20 @@ def main() -> int:
     parser.add_argument("--out", default="schedule.csv", help="output schedule CSV (default: schedule.csv)")
     parser.add_argument("--frontend", default="schedule.html",
                         help="output front-end HTML file (default: schedule.html; empty string to skip)")
+    parser.add_argument("--professors", default="data/professors",
+                        help="directory of per-professor files (default: data/professors)")
+    parser.add_argument("--subjects", default="data/subjects",
+                        help="directory of per-subject files (default: data/subjects)")
     args = parser.parse_args()
 
     grid = read_grid(Path(args.grid))
     rooms = read_rooms(Path(args.rooms))
     sections = read_sections(Path(args.sections))
+    professors = {p.name: p for p in read_professors(Path(args.professors))}
+    subjects = read_subjects(Path(args.subjects))
+    apply_subject_defaults(sections, subjects)
 
-    placed = solve(sections, rooms, grid)
+    placed = solve(sections, rooms, grid, professors)
     write_schedule(placed, Path(args.out))
 
     if args.frontend:

@@ -1,0 +1,2 @@
+professor_id,name,preferred_days,preferred_start,preferred_end,availability_start,availability_end,max_sections
+P103,Dr. Kim,"Mon,Wed",09:00,17:00,07:00,21:00,4
