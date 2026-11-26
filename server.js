@@ -1,0 +1,970 @@
+// server.js - the local web app.
+//
+// Run with:  node server.js
+// Then open the address it prints (http://127.0.0.1:8000 by default).
+//
+// This file only routes requests to the right page and writes the CSV files.
+// The solver lives in solver.js, the page HTML in pages.js, and all file
+// handling in csv.js / data.js.
+
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+
+import {
+  DAYS,
+  loadData,
+  applySubjectDefaults,
+  readSavedSchedule,
+  isStale,
+  saveSections,
+  saveRooms,
+  saveGrid,
+  saveProfessorFile,
+  saveSubjectFile,
+  saveSchedule,
+  toInt,
+  parseHhmm,
+  formatHhmm,
+} from "./data.js";
+import { solve, explainUnplaced, placementPenalty } from "./solver.js";
+import {
+  validateSection,
+  validateProfessor,
+  validateSubject,
+  validateRoom,
+  validateGrid,
+} from "./validate.js";
+import * as pages from "./pages.js";
+
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+// --- command line flags ----------------------------------------------------
+
+const args = process.argv.slice(2);
+function flagValue(name, fallback) {
+  const index = args.indexOf(name);
+  return index >= 0 && args[index + 1] ? args[index + 1] : fallback;
+}
+
+const PORT = Number(flagValue("--port", "8000"));
+const BUDGET_MS = Number(flagValue("--budget", "5000"));
+const OPEN_BROWSER = !args.includes("--no-browser");
+const HOST = args.includes("--lan") ? "0.0.0.0" : "127.0.0.1";
+
+// The generated-but-not-saved schedule. It lives here in memory only, which is
+// why restarting the server throws an unsaved preview away.
+let preview = null;
+
+// --- small helpers ---------------------------------------------------------
+
+function sendHtml(res, html, status = 200) {
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(html);
+}
+
+function sendCss(res, css) {
+  res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+  res.end(css);
+}
+
+function redirect(res, location) {
+  res.writeHead(303, { location });
+  res.end();
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 2_000_000) {
+        reject(new Error("Form is too large."));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(new URLSearchParams(Buffer.concat(chunks).toString("utf8"))));
+    req.on("error", reject);
+  });
+}
+
+/** Everything a page needs: fresh CSV data, the saved schedule and any preview. */
+function baseContext(extra = {}) {
+  const data = loadData(ROOT);
+  const saved = readSavedSchedule(ROOT);
+  return {
+    data,
+    saved,
+    preview,
+    stale: isStale(data, saved),
+    exportExists: fs.existsSync(data.paths.export),
+    budgetMs: BUDGET_MS,
+    ...extra,
+  };
+}
+
+function flash(path, message, warnings = []) {
+  const text = [message, ...warnings].filter(Boolean).join(" ");
+  return { redirect: `${path}?msg=${encodeURIComponent(text)}` };
+}
+
+function notFound() {
+  return { html: pages.notFoundPage(baseContext({ title: "Not found" })), status: 404 };
+}
+
+/** Normalise solver placements (nested) and saved rows (flat) to one shape. */
+function flatten(placements) {
+  return placements.map((placement) =>
+    placement.section
+      ? {
+          section_id: placement.section.section_id,
+          course_id: placement.section.course_id,
+          instructor: placement.section.instructor,
+          day: placement.day,
+          start: placement.start,
+          end: placement.end,
+        }
+      : placement
+  );
+}
+
+// --- form value builders ---------------------------------------------------
+
+function sectionValuesFromForm(form) {
+  return {
+    section_id: (form.get("section_id") ?? "").trim(),
+    course_id: (form.get("course_id") ?? "").trim(),
+    course_name: (form.get("course_name") ?? "").trim(),
+    instructor: (form.get("instructor") ?? "").trim(),
+    capacity_needed: (form.get("capacity_needed") ?? "").trim(),
+    duration_minutes: (form.get("duration_minutes") ?? "").trim(),
+    allowed_days: form.getAll("days"),
+  };
+}
+
+function professorValuesFromForm(form) {
+  return {
+    professor_id: (form.get("professor_id") ?? "").trim(),
+    name: (form.get("name") ?? "").trim(),
+    preferred_days: form.getAll("days"),
+    preferred_start: (form.get("preferred_start") ?? "").trim(),
+    preferred_end: (form.get("preferred_end") ?? "").trim(),
+    availability_start: (form.get("availability_start") ?? "").trim(),
+    availability_end: (form.get("availability_end") ?? "").trim(),
+    max_sections: (form.get("max_sections") ?? "").trim(),
+  };
+}
+
+function subjectValuesFromForm(form) {
+  return {
+    subject_id: (form.get("subject_id") ?? "").trim(),
+    course_name: (form.get("course_name") ?? "").trim(),
+    default_duration_minutes: (form.get("default_duration_minutes") ?? "").trim(),
+    default_capacity: (form.get("default_capacity") ?? "").trim(),
+  };
+}
+
+function roomValuesFromForm(form) {
+  return {
+    room_id: (form.get("room_id") ?? "").trim(),
+    room_name: (form.get("room_name") ?? "").trim(),
+    building: (form.get("building") ?? "").trim(),
+    capacity: (form.get("capacity") ?? "").trim(),
+  };
+}
+
+// --- routing ---------------------------------------------------------------
+
+const routes = [];
+function route(method, pattern, handler) {
+  routes.push({ method, parts: pattern.split("/").filter(Boolean), handler });
+}
+
+function matchParts(pattern, actual) {
+  if (pattern.length !== actual.length) return null;
+  const params = {};
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern[i].startsWith(":")) params[pattern[i].slice(1)] = actual[i];
+    else if (pattern[i] !== actual[i]) return null;
+  }
+  return params;
+}
+
+// --- pages -----------------------------------------------------------------
+
+route("GET", "/", () => ({ redirect: "/timetable" }));
+
+route("GET", "/web/app.css", () => ({
+  css: fs.readFileSync(path.join(ROOT, "web", "app.css"), "utf8"),
+}));
+
+route("GET", "/timetable", ({ query }) => {
+  const data = loadData(ROOT);
+  const saved = readSavedSchedule(ROOT);
+  return {
+    html: pages.timetablePage(baseContext({
+      title: "Timetable",
+      active: "timetable",
+      msg: query.get("msg"),
+      err: query.get("err"),
+      data,
+      saved,
+    })),
+  };
+});
+
+route("GET", "/generate", ({ query }) => ({
+  html: pages.generatePage(baseContext({
+    title: "Generate",
+    active: "generate",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("POST", "/generate", () => {
+  const data = loadData(ROOT);
+  const sections = applySubjectDefaults(data.sections, data.subjects);
+  const placements = solve({
+    sections,
+    rooms: data.rooms,
+    grid: data.grid,
+    professors: data.professors,
+    budgetMs: BUDGET_MS,
+  });
+
+  const placedIds = new Set(placements.map((placement) => placement.section.section_id));
+  const unplaced = sections
+    .filter((section) => !placedIds.has(section.section_id))
+    .map((section) => ({
+      section,
+      reason: explainUnplaced(section, {
+        grid: data.grid,
+        rooms: data.rooms,
+        professors: data.professors,
+        placed: placements,
+      }),
+    }));
+
+  preview = { placements, unplaced, createdAt: new Date() };
+  return { redirect: "/preview" };
+});
+
+route("GET", "/preview", () => {
+  if (!preview) return { redirect: `/generate?err=${encodeURIComponent("Generate a schedule first.")}` };
+  return {
+    html: pages.previewPage(baseContext({ title: "Preview", active: "generate" })),
+  };
+});
+
+route("POST", "/save", () => {
+  if (!preview) return { redirect: `/timetable?err=${encodeURIComponent("There is nothing to save.")}` };
+  const data = loadData(ROOT);
+  saveSchedule(data, preview.placements);
+  const placed = preview.placements.length;
+  const unplaced = preview.unplaced.length;
+  preview = null;
+  return flash("/timetable", `Schedule saved — ${placed} placed, ${unplaced} unplaced.`);
+});
+
+route("POST", "/discard", () => {
+  preview = null;
+  return flash("/timetable", "Preview discarded. The previous saved schedule is unchanged.");
+});
+
+route("GET", "/export", ({ query }) => ({
+  html: pages.exportPage(baseContext({
+    title: "Export",
+    active: "export",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("POST", "/export", () => {
+  const data = loadData(ROOT);
+  const saved = readSavedSchedule(ROOT);
+  if (!saved) return { redirect: `/export?err=${encodeURIComponent("There is no saved schedule to export.")}` };
+
+  fs.writeFileSync(
+    data.paths.export,
+    pages.exportDocument(data.grid, saved.placements),
+    "utf8"
+  );
+  return flash("/export", "schedule.html written — double-click it or share it.");
+});
+
+// --- sections --------------------------------------------------------------
+
+route("GET", "/sections", ({ query }) => ({
+  html: pages.sectionsPage(baseContext({
+    title: "Sections",
+    active: "sections",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("GET", "/sections/new", () => ({
+  html: pages.sectionFormPage(baseContext({
+    title: "Add section",
+    active: "sections",
+    isNew: true,
+    values: {
+      section_id: "",
+      course_id: "",
+      course_name: "",
+      instructor: "",
+      capacity_needed: "",
+      duration_minutes: "",
+      allowed_days: [],
+    },
+  })),
+}));
+
+route("GET", "/sections/:id/edit", ({ params }) => {
+  const data = loadData(ROOT);
+  const section = data.sections.find((item) => item.section_id === params.id);
+  if (!section) return notFound();
+
+  return {
+    html: pages.sectionFormPage(baseContext({
+      title: "Edit section",
+      active: "sections",
+      isNew: false,
+      values: {
+        section_id: section.section_id,
+        course_id: section.course_id,
+        course_name: section.course_name,
+        instructor: section.instructor,
+        capacity_needed: section.capacity_needed ? String(section.capacity_needed) : "",
+        duration_minutes: section.duration_minutes ? String(section.duration_minutes) : "",
+        allowed_days: section.allowed_days,
+      },
+    })),
+  };
+});
+
+route("POST", "/sections/save", async ({ req }) => {
+  const form = await readBody(req);
+  const values = sectionValuesFromForm(form);
+  const originalId = (form.get("original_id") ?? "").trim();
+  const data = loadData(ROOT);
+  const { errors, warnings } = validateSection(values, { data, originalId });
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      html: pages.sectionFormPage(baseContext({
+        title: originalId ? "Edit section" : "Add section",
+        active: "sections",
+        values,
+        isNew: !originalId,
+        errors,
+        warnings,
+      })),
+    };
+  }
+
+  const section = {
+    section_id: values.section_id,
+    course_id: values.course_id,
+    course_name: values.course_name,
+    instructor: values.instructor,
+    capacity_needed: toInt(values.capacity_needed, 0),
+    duration_minutes: toInt(values.duration_minutes, 0),
+    allowed_days: values.allowed_days,
+  };
+
+  const sections = originalId
+    ? data.sections.map((item) => (item.section_id === originalId ? section : item))
+    : [...data.sections, section];
+
+  saveSections(data, sections);
+  return flash("/sections", "Section saved.", warnings);
+});
+
+route("GET", "/sections/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const section = data.sections.find((item) => item.section_id === params.id);
+  if (!section) return notFound();
+
+  return {
+    html: pages.confirmPage(baseContext({ title: "Delete section", active: "sections" }), {
+      title: `Delete ${section.section_id}?`,
+      subtitle: "This removes the section row. The saved schedule is untouched until you generate again.",
+      detail: `<p><strong>${pages.escapeHtml(section.course_name || section.course_id)}</strong> · ${pages.escapeHtml(section.instructor || "no instructor")}</p>`,
+      action: `/sections/${encodeURIComponent(section.section_id)}/delete`,
+      cancelHref: "/sections",
+    }),
+  };
+});
+
+route("POST", "/sections/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  saveSections(data, data.sections.filter((section) => section.section_id !== params.id));
+  return flash("/sections", "Section deleted.");
+});
+
+// --- professors ------------------------------------------------------------
+
+route("GET", "/professors", ({ query }) => ({
+  html: pages.professorsPage(baseContext({
+    title: "Professors",
+    active: "professors",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("GET", "/professors/new", () => ({
+  html: pages.professorFormPage(baseContext({
+    title: "Add professor",
+    active: "professors",
+    isNew: true,
+    values: {
+      professor_id: "",
+      name: "",
+      preferred_days: [],
+      preferred_start: "",
+      preferred_end: "",
+      availability_start: "",
+      availability_end: "",
+      max_sections: "",
+    },
+  })),
+}));
+
+route("GET", "/professors/:id/edit", ({ params }) => {
+  const data = loadData(ROOT);
+  const professor = data.professorList.find((item) => item.id === params.id);
+  if (!professor) return notFound();
+
+  return {
+    html: pages.professorFormPage(baseContext({
+      title: "Edit professor",
+      active: "professors",
+      isNew: false,
+      values: {
+        professor_id: professor.id,
+        name: professor.name,
+        preferred_days: professor.preferred_days,
+        preferred_start: professor.preferred_start ? formatHhmm(professor.preferred_start) : "",
+        preferred_end: professor.preferred_end ? formatHhmm(professor.preferred_end) : "",
+        availability_start: professor.availability_start ? formatHhmm(professor.availability_start) : "",
+        availability_end: professor.availability_end ? formatHhmm(professor.availability_end) : "",
+        max_sections: professor.max_sections ? String(professor.max_sections) : "",
+      },
+    })),
+  };
+});
+
+route("POST", "/professors/save", async ({ req }) => {
+  const form = await readBody(req);
+  const values = professorValuesFromForm(form);
+  const originalId = (form.get("original_id") ?? "").trim();
+  const data = loadData(ROOT);
+  const { errors, warnings } = validateProfessor(values, { data, originalId });
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      html: pages.professorFormPage(baseContext({
+        title: originalId ? "Edit professor" : "Add professor",
+        active: "professors",
+        values,
+        isNew: !originalId,
+        errors,
+        warnings,
+      })),
+    };
+  }
+
+  const id = values.professor_id || originalId;
+  const file = path.join(data.paths.professors, `${id}.csv`);
+  saveProfessorFile(file, { ...values, professor_id: id });
+  return flash("/professors", "Professor saved.", warnings);
+});
+
+route("GET", "/professors/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const professor = data.professorList.find((item) => item.id === params.id);
+  if (!professor) return notFound();
+
+  const used = data.sections.filter((section) => section.instructor === professor.name);
+  if (used.length > 0) {
+    return {
+      html: pages.confirmPage(baseContext({ title: "Delete professor", active: "professors" }), {
+        title: `Cannot delete ${professor.name}`,
+        subtitle: `${used.length} section(s) still use this professor.`,
+        detail: `<p>${used.map((section) => `<code>${pages.escapeHtml(section.section_id)}</code>`).join(", ")}</p>
+          <p class="muted">Delete or rename those sections first.</p>`,
+        action: "",
+        cancelHref: "/professors",
+      }),
+    };
+  }
+
+  return {
+    html: pages.confirmPage(baseContext({ title: "Delete professor", active: "professors" }), {
+      title: `Delete ${professor.name}?`,
+      subtitle: "This removes the professor file. No section uses it.",
+      detail: `<p>${pages.escapeHtml(professor.file)}</p>`,
+      action: `/professors/${encodeURIComponent(professor.id)}/delete`,
+      cancelHref: "/professors",
+    }),
+  };
+});
+
+route("POST", "/professors/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const professor = data.professorList.find((item) => item.id === params.id);
+  if (!professor) return notFound();
+
+  const used = data.sections.filter((section) => section.instructor === professor.name);
+  if (used.length > 0) {
+    return {
+      redirect: `/professors?err=${encodeURIComponent(
+        `${professor.name} still teaches ${used.length} section(s). Delete or rename them first.`
+      )}`,
+    };
+  }
+
+  fs.unlinkSync(professor.file);
+  return flash("/professors", "Professor deleted.");
+});
+
+route("GET", "/schedules", () => {
+  const data = loadData(ROOT);
+  const saved = readSavedSchedule(ROOT);
+  const source = preview ? preview.placements : saved ? saved.placements : [];
+  const flat = flatten(source);
+  const sourceLabel = preview ? "preview" : saved ? "saved" : "current";
+
+  const rows = data.professorList.map((professor) => {
+    const own = flat.filter((placement) => placement.instructor === professor.name);
+    const hours = own.reduce((total, placement) => total + (placement.end - placement.start), 0) / 60;
+    const inside = own.filter((placement) =>
+      placementPenalty(
+        {
+          section: { instructor: placement.instructor },
+          day: placement.day,
+          start: placement.start,
+          end: placement.end,
+        },
+        data.professors
+      ) === 0
+    ).length;
+
+    return { professor, count: own.length, hours, inside, outside: own.length - inside };
+  });
+
+  return {
+    html: pages.schedulesPage(
+      baseContext({ title: "Professor schedules", active: "schedules", sourceLabel }),
+      rows
+    ),
+  };
+});
+
+route("GET", "/professors/:id", ({ params }) => {
+  const data = loadData(ROOT);
+  const professor = data.professorList.find((item) => item.id === params.id);
+  if (!professor) return notFound();
+
+  const saved = readSavedSchedule(ROOT);
+  const source = preview
+    ? { placements: preview.placements, label: "preview" }
+    : saved
+      ? { placements: saved.placements, label: "saved" }
+      : { placements: [], label: "current" };
+
+  const placedIds = new Set(
+    flatten(source.placements).map((placement) => placement.section_id)
+  );
+  const sections = applySubjectDefaults(data.sections, data.subjects);
+  const unplaced = sections
+    .filter((section) => section.instructor === professor.name && !placedIds.has(section.section_id))
+    .map((section) => ({
+      section,
+      reason: explainUnplaced(section, {
+        grid: data.grid,
+        rooms: data.rooms,
+        professors: data.professors,
+        placed: source.placements,
+      }),
+    }));
+
+  return {
+    html: pages.professorDetailPage(baseContext({
+      title: `${professor.name} schedule`,
+      active: "schedules",
+      professor,
+      placements: source.placements,
+      unplaced,
+      sourceLabel: source.label,
+    })),
+  };
+});
+
+// --- subjects --------------------------------------------------------------
+
+route("GET", "/subjects", ({ query }) => ({
+  html: pages.subjectsPage(baseContext({
+    title: "Subjects",
+    active: "subjects",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("GET", "/subjects/new", () => ({
+  html: pages.subjectFormPage(baseContext({
+    title: "Add subject",
+    active: "subjects",
+    isNew: true,
+    values: {
+      subject_id: "",
+      course_name: "",
+      default_duration_minutes: "",
+      default_capacity: "",
+    },
+  })),
+}));
+
+route("GET", "/subjects/:id/edit", ({ params }) => {
+  const data = loadData(ROOT);
+  const subject = data.subjectList.find((item) => item.id === params.id);
+  if (!subject) return notFound();
+
+  return {
+    html: pages.subjectFormPage(baseContext({
+      title: "Edit subject",
+      active: "subjects",
+      isNew: false,
+      values: {
+        subject_id: subject.id,
+        course_name: subject.course_name,
+        default_duration_minutes: subject.default_duration_minutes ? String(subject.default_duration_minutes) : "",
+        default_capacity: subject.default_capacity ? String(subject.default_capacity) : "",
+      },
+    })),
+  };
+});
+
+route("POST", "/subjects/save", async ({ req }) => {
+  const form = await readBody(req);
+  const values = subjectValuesFromForm(form);
+  const originalId = (form.get("original_id") ?? "").trim();
+  const data = loadData(ROOT);
+  const { errors, warnings } = validateSubject(values, { data, originalId });
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      html: pages.subjectFormPage(baseContext({
+        title: originalId ? "Edit subject" : "Add subject",
+        active: "subjects",
+        values,
+        isNew: !originalId,
+        errors,
+        warnings,
+      })),
+    };
+  }
+
+  const id = values.subject_id || originalId;
+  const file = path.join(data.paths.subjects, `${id}.csv`);
+  saveSubjectFile(file, { ...values, subject_id: id });
+  return flash("/subjects", "Subject saved.", warnings);
+});
+
+route("GET", "/subjects/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const subject = data.subjectList.find((item) => item.id === params.id);
+  if (!subject) return notFound();
+
+  const used = data.sections.filter((section) => section.course_id === subject.id).length;
+  return {
+    html: pages.confirmPage(baseContext({ title: "Delete subject", active: "subjects" }), {
+      title: `Delete ${subject.id}?`,
+      subtitle: used > 0
+        ? `${used} section(s) use this course id. They keep their own values, but lose the subject defaults.`
+        : "No section uses this subject.",
+      detail: `<p>${pages.escapeHtml(subject.file)}</p>`,
+      action: `/subjects/${encodeURIComponent(subject.id)}/delete`,
+      cancelHref: "/subjects",
+    }),
+  };
+});
+
+route("POST", "/subjects/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const subject = data.subjectList.find((item) => item.id === params.id);
+  if (!subject) return notFound();
+
+  fs.unlinkSync(subject.file);
+  return flash("/subjects", "Subject deleted. Sections keep the values they already have.");
+});
+
+// --- rooms and grid --------------------------------------------------------
+
+route("GET", "/rooms", ({ query }) => ({
+  html: pages.roomsPage(baseContext({
+    title: "Rooms & grid",
+    active: "rooms",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("GET", "/rooms/new", () => ({
+  html: pages.roomFormPage(baseContext({
+    title: "Add room",
+    active: "rooms",
+    isNew: true,
+    values: { room_id: "", room_name: "", building: "", capacity: "" },
+  })),
+}));
+
+route("GET", "/rooms/:id/edit", ({ params }) => {
+  const data = loadData(ROOT);
+  const room = data.rooms.find((item) => item.id === params.id);
+  if (!room) return notFound();
+
+  return {
+    html: pages.roomFormPage(baseContext({
+      title: "Edit room",
+      active: "rooms",
+      isNew: false,
+      values: {
+        room_id: room.id,
+        room_name: room.name,
+        building: room.building,
+        capacity: String(room.capacity),
+      },
+    })),
+  };
+});
+
+route("POST", "/rooms/save", async ({ req }) => {
+  const form = await readBody(req);
+  const values = roomValuesFromForm(form);
+  const originalId = (form.get("original_id") ?? "").trim();
+  const data = loadData(ROOT);
+  const { errors, warnings } = validateRoom(values, { data, originalId });
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      html: pages.roomFormPage(baseContext({
+        title: originalId ? "Edit room" : "Add room",
+        active: "rooms",
+        values,
+        isNew: !originalId,
+        errors,
+        warnings,
+      })),
+    };
+  }
+
+  const room = {
+    id: values.room_id,
+    name: values.room_name,
+    building: values.building,
+    capacity: toInt(values.capacity, 0),
+  };
+
+  const rooms = originalId
+    ? data.rooms.map((item) => (item.id === originalId ? room : item))
+    : [...data.rooms, room];
+
+  saveRooms(data, rooms);
+  return flash("/rooms", "Room saved.", warnings);
+});
+
+route("GET", "/rooms/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  const room = data.rooms.find((item) => item.id === params.id);
+  if (!room) return notFound();
+
+  return {
+    html: pages.confirmPage(baseContext({ title: "Delete room", active: "rooms" }), {
+      title: `Delete ${room.name || room.id}?`,
+      subtitle: "The saved schedule is a snapshot, so it keeps showing this room until you generate again.",
+      detail: `<p>${pages.escapeHtml(room.id)} · ${room.capacity} seats</p>`,
+      action: `/rooms/${encodeURIComponent(room.id)}/delete`,
+      cancelHref: "/rooms",
+    }),
+  };
+});
+
+route("POST", "/rooms/:id/delete", ({ params }) => {
+  const data = loadData(ROOT);
+  saveRooms(data, data.rooms.filter((room) => room.id !== params.id));
+  return flash("/rooms", "Room deleted.");
+});
+
+route("GET", "/grid", ({ query }) => {
+  const data = loadData(ROOT);
+  return {
+    html: pages.gridPage(baseContext({
+      title: "Teaching grid",
+      active: "rooms",
+      msg: query.get("msg"),
+      err: query.get("err"),
+      values: {
+        first_day: DAYS[data.grid.first],
+        last_day: DAYS[data.grid.last],
+        start: formatHhmm(data.grid.start),
+        end: formatHhmm(data.grid.end),
+        slot_minutes: String(data.grid.slot_minutes),
+      },
+    })),
+  };
+});
+
+route("POST", "/grid", async ({ req }) => {
+  const form = await readBody(req);
+  const values = {
+    first_day: (form.get("first_day") ?? "").trim(),
+    last_day: (form.get("last_day") ?? "").trim(),
+    start: (form.get("start") ?? "").trim(),
+    end: (form.get("end") ?? "").trim(),
+    slot_minutes: (form.get("slot_minutes") ?? "").trim(),
+  };
+  const data = loadData(ROOT);
+  const { errors, warnings } = validateGrid(values);
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      html: pages.gridPage(baseContext({
+        title: "Teaching grid",
+        active: "rooms",
+        values,
+        errors,
+        warnings,
+      })),
+    };
+  }
+
+  const first = DAYS.indexOf(values.first_day);
+  const last = DAYS.indexOf(values.last_day);
+  saveGrid(data, {
+    first,
+    last,
+    start: parseHhmm(values.start),
+    end: parseHhmm(values.end),
+    slot_minutes: Number(values.slot_minutes),
+    days: DAYS.slice(first, last + 1),
+  });
+
+  return flash("/rooms", "Teaching grid saved.", warnings);
+});
+
+// --- help and fallbacks ----------------------------------------------------
+
+route("GET", "/help", ({ query }) => ({
+  html: pages.helpPage(baseContext({
+    title: "How to use this",
+    active: "help",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+// --- HTTP plumbing ---------------------------------------------------------
+
+async function handle(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+  const pathname = decodeURIComponent(url.pathname).replace(/\/+$/, "") || "/";
+  const parts = pathname.split("/").filter(Boolean);
+
+  if (req.method === "GET" && pathname === "/favicon.ico") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  for (const entry of routes) {
+    if (entry.method !== req.method) continue;
+    const params = matchParts(entry.parts, parts);
+    if (!params) continue;
+
+    try {
+      const result = await entry.handler({ params, query: url.searchParams, req });
+      if (result.redirect) return redirect(res, result.redirect);
+      if (result.css) return sendCss(res, result.css);
+      return sendHtml(res, result.html, result.status ?? 200);
+    } catch (error) {
+      console.error(error);
+      try {
+        return sendHtml(
+          res,
+          pages.errorPage(baseContext({ title: "Error" }), error.stack ?? String(error)),
+          500
+        );
+      } catch {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end(`Something went wrong:\n${error.stack ?? error}`);
+        return;
+      }
+    }
+  }
+
+  return sendHtml(res, pages.notFoundPage(baseContext({ title: "Not found" })), 404);
+}
+
+function openBrowser(url) {
+  try {
+    if (process.platform === "win32") {
+      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+    } else if (process.platform === "darwin") {
+      spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+    } else {
+      spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+    }
+  } catch {
+    // Opening a browser is a convenience; never let it stop the server.
+  }
+}
+
+let attempts = 0;
+
+function start(port) {
+  const server = http.createServer(handle);
+
+  server.once("error", (error) => {
+    if (error.code === "EADDRINUSE" && attempts < 10) {
+      attempts += 1;
+      console.log(`Port ${port} is busy, trying ${port + 1}…`);
+      start(port + 1);
+      return;
+    }
+    console.error("Could not start the server:", error.message);
+    process.exit(1);
+  });
+
+  server.once("listening", () => {
+    const { port: actualPort } = server.address();
+    const url = `http://127.0.0.1:${actualPort}/timetable`;
+    console.log("");
+    console.log(`  Class Scheduler is running at ${url}`);
+    console.log("  Press Ctrl+C to stop.");
+    console.log("");
+    if (OPEN_BROWSER) openBrowser(url);
+  });
+
+  server.listen(port, HOST);
+}
+
+start(PORT);
