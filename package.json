@@ -1,0 +1,10 @@
+{
+  "name": "class-scheduler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Automatic class scheduler for the college (local web app, no dependencies)",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
