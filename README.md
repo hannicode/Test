@@ -82,6 +82,7 @@ every remaining slot clashing with something else).
 | `data.js` | Reads and writes the CSV data |
 | `csv.js` | CSV parsing and safe (atomic) file writing |
 | `validate.js` | Rules that decide whether a form may be saved |
+| `test.js` | The checks behind `npm test` |
 | `web/app.css` | Styling for the app shell |
 | `data/` | Your data — this is the source of truth |
 | `schedule.csv` | The saved schedule |
@@ -89,6 +90,33 @@ every remaining slot clashing with something else).
 
 The app writes each CSV safely: a temporary file is written first, the previous
 version is kept as `.bak`, and only then does it replace the original.
+
+---
+
+## The demo department
+
+The repo ships with a realistic sample: 12 subjects, 25 professors, 12 rooms and
+60 sections for a computing and mathematics department. It exists so the app and
+the timetable are never empty, and so you can see what a real term looks like
+before entering your own.
+
+To use your own data, replace the rows in `data/sections.csv`, `data/rooms.csv`
+and the files in `data/professors/` and `data/subjects/` — or delete the folders
+and add everything through the app. The sample stays available in git history.
+
+---
+
+## Tests
+
+```powershell
+npm test
+```
+
+Eleven checks, no framework: the data folder is complete, every section points
+at a real professor and subject, the solver places all 60 sections without
+breaking a hard constraint, the forms refuse broken input, CSV survives commas
+and quotes, and every page answers. It never saves anything, so it is safe to run
+at any time.
 
 ---
 
@@ -121,10 +149,10 @@ One row per class meeting.
 
 | Column | Example | Notes |
 | --- | --- | --- |
-| `section_id` | `S101-L1` | Unique |
+| `section_id` | `CS101-L1` | Unique |
 | `course_id` | `CS101` | Matches a subject file |
-| `course_name` | `Intro to Computing` | Shown on the timetable |
-| `instructor` | `Dr. Lee` | Matches a professor's `name` |
+| `course_name` | `Introduction to Programming` | Shown on the timetable |
+| `instructor` | `Dr. Amara Okafor` | Matches a professor's `name` |
 | `capacity_needed` | `30` | Blank = subject default, then any room |
 | `duration_minutes` | `90` | Blank = subject default |
 | `allowed_days` | `Mon,Wed,Fri` | Blank = any day in the grid |
@@ -134,7 +162,7 @@ One row per class meeting.
 | Column | Example | Notes |
 | --- | --- | --- |
 | `professor_id` | `P101` | Also the file name |
-| `name` | `Dr. Lee` | Sections match on this exact text |
+| `name` | `Dr. Amara Okafor` | Sections match on this exact text |
 | `preferred_days` | `Mon,Wed,Fri` | Soft preference |
 | `preferred_start` | `08:00` | Soft preference |
 | `preferred_end` | `16:00` | Soft preference |
@@ -147,9 +175,20 @@ One row per class meeting.
 | Column | Example | Notes |
 | --- | --- | --- |
 | `subject_id` | `CS101` | Matches a section's `course_id` |
-| `course_name` | `Intro to Computing` | Shown on the timetable |
+| `course_name` | `Introduction to Programming` | Shown on the timetable |
 | `default_duration_minutes` | `90` | Used when a section leaves duration blank |
 | `default_capacity` | `30` | Used when a section leaves capacity blank |
+
+### `data/settings.csv`
+
+One row: what the published timetable says about itself.
+
+| Column | Example | Meaning |
+| --- | --- | --- |
+| `school_name` | `Northgate College` | Shown in the heading |
+| `term_label` | `Fall 2026` | Shown next to the school name |
+| `term_start` | `2026-09-07` | Term dates, for reference |
+| `term_end` | `2026-12-18` | Term dates, for reference |
 
 ---
 
@@ -160,8 +199,14 @@ node server.js                    # 127.0.0.1:8000, opens the browser
 node server.js --port 9000        # start on another port
 node server.js --no-browser       # do not open the browser
 node server.js --budget 10000     # give the solver 10 seconds per generate
+node server.js --data data-demo   # use another data folder (see below)
 node server.js --lan              # listen on 0.0.0.0 (other devices on your network)
 ```
+
+`--data <folder>` points the app at a different data folder and keeps the
+schedule it produces **inside that folder**, so a demo run can never overwrite
+your real `schedule.csv`. Copy `data/` somewhere, run with `--data`, and the two
+sets stay independent.
 
 `--lan` exposes the app to your local network. It has no login, so only use it
 on a network you trust.

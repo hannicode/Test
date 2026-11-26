@@ -1003,6 +1003,7 @@ export function helpPage(ctx) {
           <tr><td><code>data/sections.csv</code></td><td>One row per class meeting</td></tr>
           <tr><td><code>data/professors/*.csv</code></td><td>One file per professor: windows and limits</td></tr>
           <tr><td><code>data/subjects/*.csv</code></td><td>One file per subject: duration and capacity defaults</td></tr>
+          <tr><td><code>data/settings.csv</code></td><td>School name and term shown on the published page</td></tr>
           <tr><td><code>schedule.csv</code></td><td>The saved schedule</td></tr>
           <tr><td><code>schedule.html</code></td><td>The exported, shareable timetable</td></tr>
         </tbody>

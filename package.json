@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Automatic class scheduler for the college (local web app, no dependencies)",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test.js"
   }
 }

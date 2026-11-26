@@ -54,6 +54,18 @@ const BUDGET_MS = Number(flagValue("--budget", "5000"));
 const OPEN_BROWSER = !args.includes("--no-browser");
 const HOST = args.includes("--lan") ? "0.0.0.0" : "127.0.0.1";
 
+// `--data <folder>` runs against a different data folder (for example a demo
+// set, or a second term) and keeps the schedule it produces inside that
+// folder, so real results at the project root are never overwritten.
+const DATA_FLAG = flagValue("--data", "");
+const WORKSPACE = DATA_FLAG ? path.resolve(ROOT, DATA_FLAG) : path.join(ROOT, "data");
+const OUT_DIR = DATA_FLAG ? WORKSPACE : ROOT;
+
+/** Load the folder this run is pointed at. */
+function load() {
+  return loadData({ dataDir: WORKSPACE, outDir: OUT_DIR });
+}
+
 // The generated-but-not-saved schedule. It lives here in memory only, which is
 // why restarting the server throws an unsaved preview away.
 let preview = null;
@@ -98,8 +110,8 @@ function readBody(req) {
 
 /** Everything a page needs: fresh CSV data, the saved schedule and any preview. */
 function baseContext(extra = {}) {
-  const data = loadData(ROOT);
-  const saved = readSavedSchedule(ROOT);
+  const data = load();
+  const saved = readSavedSchedule(OUT_DIR);
   return {
     data,
     saved,
@@ -207,8 +219,8 @@ route("GET", "/web/app.css", () => ({
 }));
 
 route("GET", "/timetable", ({ query }) => {
-  const data = loadData(ROOT);
-  const saved = readSavedSchedule(ROOT);
+  const data = load();
+  const saved = readSavedSchedule(OUT_DIR);
   return {
     html: pages.timetablePage(baseContext({
       title: "Timetable",
@@ -231,7 +243,7 @@ route("GET", "/generate", ({ query }) => ({
 }));
 
 route("POST", "/generate", () => {
-  const data = loadData(ROOT);
+  const data = load();
   const sections = applySubjectDefaults(data.sections, data.subjects);
   const placements = solve({
     sections,
@@ -267,7 +279,7 @@ route("GET", "/preview", () => {
 
 route("POST", "/save", () => {
   if (!preview) return { redirect: `/timetable?err=${encodeURIComponent("There is nothing to save.")}` };
-  const data = loadData(ROOT);
+  const data = load();
   saveSchedule(data, preview.placements);
   const placed = preview.placements.length;
   const unplaced = preview.unplaced.length;
@@ -290,8 +302,8 @@ route("GET", "/export", ({ query }) => ({
 }));
 
 route("POST", "/export", () => {
-  const data = loadData(ROOT);
-  const saved = readSavedSchedule(ROOT);
+  const data = load();
+  const saved = readSavedSchedule(OUT_DIR);
   if (!saved) return { redirect: `/export?err=${encodeURIComponent("There is no saved schedule to export.")}` };
 
   fs.writeFileSync(
@@ -331,7 +343,7 @@ route("GET", "/sections/new", () => ({
 }));
 
 route("GET", "/sections/:id/edit", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const section = data.sections.find((item) => item.section_id === params.id);
   if (!section) return notFound();
 
@@ -357,7 +369,7 @@ route("POST", "/sections/save", async ({ req }) => {
   const form = await readBody(req);
   const values = sectionValuesFromForm(form);
   const originalId = (form.get("original_id") ?? "").trim();
-  const data = loadData(ROOT);
+  const data = load();
   const { errors, warnings } = validateSection(values, { data, originalId });
 
   if (errors.length > 0) {
@@ -393,7 +405,7 @@ route("POST", "/sections/save", async ({ req }) => {
 });
 
 route("GET", "/sections/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const section = data.sections.find((item) => item.section_id === params.id);
   if (!section) return notFound();
 
@@ -409,7 +421,7 @@ route("GET", "/sections/:id/delete", ({ params }) => {
 });
 
 route("POST", "/sections/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   saveSections(data, data.sections.filter((section) => section.section_id !== params.id));
   return flash("/sections", "Section deleted.");
 });
@@ -444,7 +456,7 @@ route("GET", "/professors/new", () => ({
 }));
 
 route("GET", "/professors/:id/edit", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const professor = data.professorList.find((item) => item.id === params.id);
   if (!professor) return notFound();
 
@@ -471,7 +483,7 @@ route("POST", "/professors/save", async ({ req }) => {
   const form = await readBody(req);
   const values = professorValuesFromForm(form);
   const originalId = (form.get("original_id") ?? "").trim();
-  const data = loadData(ROOT);
+  const data = load();
   const { errors, warnings } = validateProfessor(values, { data, originalId });
 
   if (errors.length > 0) {
@@ -495,7 +507,7 @@ route("POST", "/professors/save", async ({ req }) => {
 });
 
 route("GET", "/professors/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const professor = data.professorList.find((item) => item.id === params.id);
   if (!professor) return notFound();
 
@@ -525,7 +537,7 @@ route("GET", "/professors/:id/delete", ({ params }) => {
 });
 
 route("POST", "/professors/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const professor = data.professorList.find((item) => item.id === params.id);
   if (!professor) return notFound();
 
@@ -543,8 +555,8 @@ route("POST", "/professors/:id/delete", ({ params }) => {
 });
 
 route("GET", "/schedules", () => {
-  const data = loadData(ROOT);
-  const saved = readSavedSchedule(ROOT);
+  const data = load();
+  const saved = readSavedSchedule(OUT_DIR);
   const source = preview ? preview.placements : saved ? saved.placements : [];
   const flat = flatten(source);
   const sourceLabel = preview ? "preview" : saved ? "saved" : "current";
@@ -576,11 +588,11 @@ route("GET", "/schedules", () => {
 });
 
 route("GET", "/professors/:id", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const professor = data.professorList.find((item) => item.id === params.id);
   if (!professor) return notFound();
 
-  const saved = readSavedSchedule(ROOT);
+  const saved = readSavedSchedule(OUT_DIR);
   const source = preview
     ? { placements: preview.placements, label: "preview" }
     : saved
@@ -641,7 +653,7 @@ route("GET", "/subjects/new", () => ({
 }));
 
 route("GET", "/subjects/:id/edit", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const subject = data.subjectList.find((item) => item.id === params.id);
   if (!subject) return notFound();
 
@@ -664,7 +676,7 @@ route("POST", "/subjects/save", async ({ req }) => {
   const form = await readBody(req);
   const values = subjectValuesFromForm(form);
   const originalId = (form.get("original_id") ?? "").trim();
-  const data = loadData(ROOT);
+  const data = load();
   const { errors, warnings } = validateSubject(values, { data, originalId });
 
   if (errors.length > 0) {
@@ -688,7 +700,7 @@ route("POST", "/subjects/save", async ({ req }) => {
 });
 
 route("GET", "/subjects/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const subject = data.subjectList.find((item) => item.id === params.id);
   if (!subject) return notFound();
 
@@ -707,7 +719,7 @@ route("GET", "/subjects/:id/delete", ({ params }) => {
 });
 
 route("POST", "/subjects/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const subject = data.subjectList.find((item) => item.id === params.id);
   if (!subject) return notFound();
 
@@ -736,7 +748,7 @@ route("GET", "/rooms/new", () => ({
 }));
 
 route("GET", "/rooms/:id/edit", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const room = data.rooms.find((item) => item.id === params.id);
   if (!room) return notFound();
 
@@ -759,7 +771,7 @@ route("POST", "/rooms/save", async ({ req }) => {
   const form = await readBody(req);
   const values = roomValuesFromForm(form);
   const originalId = (form.get("original_id") ?? "").trim();
-  const data = loadData(ROOT);
+  const data = load();
   const { errors, warnings } = validateRoom(values, { data, originalId });
 
   if (errors.length > 0) {
@@ -792,7 +804,7 @@ route("POST", "/rooms/save", async ({ req }) => {
 });
 
 route("GET", "/rooms/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   const room = data.rooms.find((item) => item.id === params.id);
   if (!room) return notFound();
 
@@ -808,13 +820,13 @@ route("GET", "/rooms/:id/delete", ({ params }) => {
 });
 
 route("POST", "/rooms/:id/delete", ({ params }) => {
-  const data = loadData(ROOT);
+  const data = load();
   saveRooms(data, data.rooms.filter((room) => room.id !== params.id));
   return flash("/rooms", "Room deleted.");
 });
 
 route("GET", "/grid", ({ query }) => {
-  const data = loadData(ROOT);
+  const data = load();
   return {
     html: pages.gridPage(baseContext({
       title: "Teaching grid",
@@ -841,7 +853,7 @@ route("POST", "/grid", async ({ req }) => {
     end: (form.get("end") ?? "").trim(),
     slot_minutes: (form.get("slot_minutes") ?? "").trim(),
   };
-  const data = loadData(ROOT);
+  const data = load();
   const { errors, warnings } = validateGrid(values);
 
   if (errors.length > 0) {
@@ -940,31 +952,55 @@ function openBrowser(url) {
 
 let attempts = 0;
 
-function start(port) {
+/**
+ * Start listening. Resolves with { server, port, url } once the socket is up,
+ * so callers (and the tests) never have to guess when it is ready.
+ */
+export function startServer({
+  port = PORT,
+  host = HOST,
+  openBrowser: shouldOpen = OPEN_BROWSER,
+} = {}) {
   const server = http.createServer(handle);
 
-  server.once("error", (error) => {
-    if (error.code === "EADDRINUSE" && attempts < 10) {
-      attempts += 1;
-      console.log(`Port ${port} is busy, trying ${port + 1}…`);
-      start(port + 1);
-      return;
-    }
-    console.error("Could not start the server:", error.message);
-    process.exit(1);
-  });
+  return new Promise((resolve, reject) => {
+    server.once("error", (error) => {
+      if (error.code === "EADDRINUSE" && port !== 0 && attempts < 10) {
+        attempts += 1;
+        console.log(`Port ${port} is busy, trying ${port + 1}…`);
+        resolve(startServer({ port: port + 1, host, openBrowser: shouldOpen }));
+        return;
+      }
+      reject(error);
+    });
 
-  server.once("listening", () => {
-    const { port: actualPort } = server.address();
-    const url = `http://127.0.0.1:${actualPort}/timetable`;
-    console.log("");
-    console.log(`  Class Scheduler is running at ${url}`);
-    console.log("  Press Ctrl+C to stop.");
-    console.log("");
-    if (OPEN_BROWSER) openBrowser(url);
-  });
+    server.once("listening", () => {
+      const actualPort = server.address().port;
+      const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+      const url = `http://${shownHost}:${actualPort}/timetable`;
+      if (shouldOpen) openBrowser(url);
+      resolve({ server, port: actualPort, url });
+    });
 
-  server.listen(port, HOST);
+    server.listen(port, host);
+  });
 }
 
-start(PORT);
+// Only start (and print the banner) when run directly, not when imported by a test.
+const isDirectRun =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectRun) {
+  startServer()
+    .then(({ url }) => {
+      const where = DATA_FLAG ? `   (data: ${WORKSPACE})` : "";
+      console.log("");
+      console.log(`  Class Scheduler is running at ${url}${where}`);
+      console.log("  Press Ctrl+C to stop.");
+      console.log("");
+    })
+    .catch((error) => {
+      console.error("Could not start the server:", error.message);
+      process.exit(1);
+    });
+}

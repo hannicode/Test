@@ -9,6 +9,10 @@ __pycache__/
 *.tmp
 *.bak
 
+# Working files: drafts are private until published, imports are just history
+data/drafts/
+data/imports/
+
 # Editor / OS noise
 .vscode/
 .idea/

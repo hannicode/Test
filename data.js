@@ -28,6 +28,15 @@ export const SCHEDULE_HEADERS = [
   "section_id", "course_id", "course_name", "instructor",
   "room_id", "room_name", "day", "start", "end",
 ];
+export const SETTINGS_HEADERS = ["school_name", "term_label", "term_start", "term_end"];
+
+/** Shown on the published timetable; blank values simply disappear from it. */
+export const DEFAULT_SETTINGS = {
+  school_name: "",
+  term_label: "",
+  term_start: "",
+  term_end: "",
+};
 
 /** "08:30" -> 510 minutes since midnight. Anything invalid -> null. */
 export function parseHhmm(text) {
@@ -83,20 +92,44 @@ function readGrid(file) {
   };
 }
 
-/** Load every CSV file and turn it into objects. */
-export function loadData(root) {
-  const dataDir = path.join(root, "data");
+/** Read settings.csv, falling back to blanks if it does not exist yet. */
+function readSettings(file) {
+  if (!fs.existsSync(file)) return { ...DEFAULT_SETTINGS };
+  const [row = {}] = readCsvFile(file);
+  return {
+    school_name: String(row.school_name ?? "").trim(),
+    term_label: String(row.term_label ?? "").trim(),
+    term_start: String(row.term_start ?? "").trim(),
+    term_end: String(row.term_end ?? "").trim(),
+  };
+}
+
+/**
+ * Load every CSV file and turn it into objects.
+ *
+ * `dataDir` is the folder holding grid.csv, rooms.csv, sections.csv,
+ * professors/ and subjects/ - the things you edit. `outDir` is where the
+ * schedule and the exported page are written; normally that is the project
+ * root, but `--data` sends them inside the alternate folder so a demo run can
+ * never overwrite real results.
+ */
+export function loadData({ dataDir, outDir }) {
   const paths = {
     grid: path.join(dataDir, "grid.csv"),
     rooms: path.join(dataDir, "rooms.csv"),
     sections: path.join(dataDir, "sections.csv"),
+    settings: path.join(dataDir, "settings.csv"),
     professors: path.join(dataDir, "professors"),
     subjects: path.join(dataDir, "subjects"),
-    schedule: path.join(root, "schedule.csv"),
-    export: path.join(root, "schedule.html"),
+    drafts: path.join(dataDir, "drafts"),
+    schedules: path.join(dataDir, "schedules"),
+    imports: path.join(dataDir, "imports"),
+    schedule: path.join(outDir, "schedule.csv"),
+    export: path.join(outDir, "schedule.html"),
   };
 
   const grid = readGrid(paths.grid);
+  const settings = readSettings(paths.settings);
 
   const rooms = readCsvFile(paths.rooms)
     .map((row) => ({
@@ -159,11 +192,25 @@ export function loadData(root) {
     paths.grid,
     paths.rooms,
     paths.sections,
+    paths.settings,
     ...professorList.map((professor) => professor.file),
     ...subjectList.map((subject) => subject.file),
   ];
 
-  return { root, dataDir, paths, grid, rooms, sections, professors, professorList, subjects, subjectList, files };
+  return {
+    dataDir,
+    outDir,
+    paths,
+    grid,
+    settings,
+    rooms,
+    sections,
+    professors,
+    professorList,
+    subjects,
+    subjectList,
+    files,
+  };
 }
 
 /** Fill blank durations/capacities from the matching subject file. */
@@ -184,9 +231,9 @@ export function sectionDays(section, grid) {
   return grid.days.filter((day) => section.allowed_days.includes(day));
 }
 
-/** Read the saved schedule.csv, or null when nothing has been saved yet. */
-export function readSavedSchedule(root) {
-  const file = path.join(root, "schedule.csv");
+/** Read the saved schedule.csv from `dir`, or null when nothing is saved. */
+export function readSavedSchedule(dir) {
+  const file = path.join(dir, "schedule.csv");
   if (!fs.existsSync(file)) return null;
 
   const placements = readCsvFile(file)
@@ -296,6 +343,20 @@ export function saveSubjectFile(file, values) {
       course_name: String(values.course_name ?? "").trim(),
       default_duration_minutes: String(values.default_duration_minutes ?? "").trim(),
       default_capacity: String(values.default_capacity ?? "").trim(),
+    }]
+  );
+}
+
+/** Save the school name and term shown on the published timetable. */
+export function saveSettings(data, settings) {
+  writeCsvFile(
+    data.paths.settings,
+    SETTINGS_HEADERS,
+    [{
+      school_name: String(settings.school_name ?? "").trim(),
+      term_label: String(settings.term_label ?? "").trim(),
+      term_start: String(settings.term_start ?? "").trim(),
+      term_end: String(settings.term_end ?? "").trim(),
     }]
   );
 }
