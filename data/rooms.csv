@@ -1,5 +1,13 @@
 room_id,room_name,building,capacity
-R101,Room 101,Main Building,30
-R102,Room 102,Main Building,60
-R103,Room 103,Main Building,120
-R104,Room 104,East Wing,250
+R101,Seminar Room 1,Main Building,25
+R102,Seminar Room 2,Main Building,30
+R103,Lecture Hall A,Main Building,45
+R104,Lecture Hall B,Main Building,60
+R105,Lecture Hall C,Main Building,90
+L201,Computer Lab 1,East Wing,30
+L202,Computer Lab 2,East Wing,35
+R201,Classroom 201,East Wing,40
+R202,Classroom 202,East Wing,50
+R301,Classroom 301,West Wing,35
+R302,Lecture Hall D,West Wing,120
+R303,Auditorium,West Wing,240

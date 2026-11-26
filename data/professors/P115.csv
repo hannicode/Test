@@ -1,0 +1,2 @@
+professor_id,name,preferred_days,preferred_start,preferred_end,availability_start,availability_end,max_sections
+P115,Dr. Ravi Menon,"Mon,Tue,Wed",10:00,17:00,08:00,20:00,5
