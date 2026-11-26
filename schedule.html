@@ -2,146 +2,169 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Class schedule</title>
 <style>
-body { font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 16px; color: #1a1a1a; }
-h1 { font-size: 20px; margin: 0 0 8px; }
-.timetable { display: grid; gap: 2px; margin: 0 0 16px; }
-.timetable .cell { border: 1px solid #d4d4d8; font-size: 12px; padding: 4px; }
-.timetable .cell.day { background: #eef1f6; font-weight: bold; text-align: center; }
-.timetable .cell.time { background: #f6f7f9; color: #666666; font-weight: 600; padding-right: 6px; text-align: right; }
-.block { border-radius: 8px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); display: flex; flex-direction: column; font-size: 11px; font-weight: 600; gap: 4px; justify-content: center; line-height: 1.2; padding: 8px 10px; text-align: center; }
-.block-course { font-size: 12px; font-weight: 700; }
-.block-info { color: #222222; font-size: 10px; font-weight: 500; }
-.tooltip { position: fixed; display: none; background: #222222; color: #ffffff; padding: 6px 8px; border-radius: 6px; font-size: 12px; pointer-events: none; z-index: 10; }
-table { border-collapse: collapse; margin-top: 8px; }
-th, td { border: 1px solid #d4d4d8; padding: 4px 6px; text-align: left; font-size: 12px; }
-th { background: #eef1f6; font-weight: 600; }
+
+:root { --line: #e4e4e7; --muted: #71717a; }
+.timetable { display: grid; gap: 2px; margin: 4px 0 22px; }
+.timetable .cell { background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
+.timetable .cell.day { background: #f4f5f7; color: #3f3f46; font-weight: 700; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; display: grid; place-items: center; }
+.timetable .cell.time { background: #f8f9fb; color: var(--muted); font-weight: 600; display: flex; align-items: flex-start; justify-content: flex-end; padding: 3px 6px 0 0; }
+.timetable .cell.corner { background: #f4f5f7; }
+.band { border-radius: 6px; pointer-events: none; z-index: 1; }
+.band-availability { background: rgba(16, 185, 129, .13); border: 1px dashed rgba(5, 150, 105, .4); }
+.band-preferred { background: rgba(59, 130, 246, .13); border: 1px dashed rgba(37, 99, 235, .4); }
+.unit { position: relative; z-index: 2; min-width: 0; }
+.block { position: absolute; inset: 0; border-radius: 8px; border: 1px solid rgba(0, 0, 0, .06); box-shadow: 0 1px 3px rgba(16, 24, 40, .16), 0 1px 2px rgba(16, 24, 40, .08); display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; overflow: hidden; line-height: 1.25; }
+.block-course { font-size: 12px; font-weight: 800; }
+.block-meta { font-size: 10px; color: #3f3f46; }
+.block-short { justify-content: center; }
+.block-short .block-meta { display: none; }
+.block-warn { outline: 2px solid #f59e0b; outline-offset: -2px; }
+.tip { display: none; position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 60; width: max-content; max-width: 280px; background: #18181b; color: #fff; border-radius: 8px; padding: 8px 10px; font-size: 11px; line-height: 1.35; white-space: pre-line; box-shadow: 0 10px 30px rgba(0, 0, 0, .3); font-weight: 500; }
+.unit:hover { z-index: 50; }
+.unit:hover .tip { display: block; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 14px; height: 10px; border-radius: 3px; display: inline-block; }
+.swatch-availability { background: rgba(16, 185, 129, .25); border: 1px dashed rgba(5, 150, 105, .6); }
+.swatch-preferred { background: rgba(59, 130, 246, .25); border: 1px dashed rgba(37, 99, 235, .6); }
+.swatch-warn { background: #fff; outline: 2px solid #f59e0b; outline-offset: -2px; }
+
+body { margin: 0; background: #f5f6f8; color: #18181b; font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; }
+main.export { max-width: 1400px; margin: 0 auto; padding: 24px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+.table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.table th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: #fafafb; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.table td { padding: 9px 12px; border-bottom: 1px solid var(--line); }
+.table tr:last-child td { border-bottom: none; }
 </style>
 </head>
 <body>
-<h1>Class schedule</h1>
-<script>
-const GRID = {
-  "first_day": "Mon",
-  "last_day": "Sat",
-  "start": 420,
-  "end": 1260,
-  "slot_minutes": 30
-};
-const PLACEMENTS = [
-  {
-    "section_id": "S101-L1",
-    "course_id": "CS101",
-    "course_name": "Intro to Computing",
-    "instructor": "Dr. Lee",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Mon",
-    "start": 480,
-    "end": 570
-  },
-  {
-    "section_id": "S101-L2",
-    "course_id": "CS101",
-    "course_name": "Intro to Computing",
-    "instructor": "Dr. Lee",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Tue",
-    "start": 480,
-    "end": 570
-  },
-  {
-    "section_id": "S102-L1",
-    "course_id": "MATH101",
-    "course_name": "Calculus I",
-    "instructor": "Prof. Patel",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Mon",
-    "start": 570,
-    "end": 630
-  },
-  {
-    "section_id": "S102-L2",
-    "course_id": "MATH101",
-    "course_name": "Calculus I",
-    "instructor": "Prof. Patel",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Tue",
-    "start": 570,
-    "end": 630
-  },
-  {
-    "section_id": "S201-L1",
-    "course_id": "CS201",
-    "course_name": "Data Structures",
-    "instructor": "Dr. Kim",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Mon",
-    "start": 630,
-    "end": 750
-  },
-  {
-    "section_id": "S201-L2",
-    "course_id": "CS201",
-    "course_name": "Data Structures",
-    "instructor": "Dr. Kim",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Tue",
-    "start": 630,
-    "end": 750
-  },
-  {
-    "section_id": "S302-L1",
-    "course_id": "MATH202",
-    "course_name": "Linear Algebra",
-    "instructor": "Prof. Chen",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Mon",
-    "start": 750,
-    "end": 840
-  },
-  {
-    "section_id": "S302-L2",
-    "course_id": "MATH202",
-    "course_name": "Linear Algebra",
-    "instructor": "Prof. Chen",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Tue",
-    "start": 750,
-    "end": 840
-  },
-  {
-    "section_id": "S401-L1",
-    "course_id": "CS401",
-    "course_name": "Algorithms",
-    "instructor": "Dr. Okafor",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Wed",
-    "start": 480,
-    "end": 600
-  },
-  {
-    "section_id": "S401-L2",
-    "course_id": "CS401",
-    "course_name": "Algorithms",
-    "instructor": "Dr. Okafor",
-    "room_id": "R101",
-    "room_name": "Room 101",
-    "day": "Tue",
-    "start": 840,
-    "end": 960
-  }
-];
-</script>
-<script src="frontend/schedule.js"></script>
+<main class="export">
+  <h1>Class schedule</h1>
+  <p class="sub">Generated 11/26/2026, 2:42:01 PM</p>
+  <div class="timetable" style="grid-template-columns:68px repeat(6, minmax(0, 1fr)); grid-template-rows:44px repeat(28, 44px);"><div class="cell corner"></div><div class="cell day" style="grid-column:2; grid-row:1;">Mon</div><div class="cell day" style="grid-column:3; grid-row:1;">Tue</div><div class="cell day" style="grid-column:4; grid-row:1;">Wed</div><div class="cell day" style="grid-column:5; grid-row:1;">Thu</div><div class="cell day" style="grid-column:6; grid-row:1;">Fri</div><div class="cell day" style="grid-column:7; grid-row:1;">Sat</div><div class="cell time" style="grid-column:1; grid-row:2;">07:00</div><div class="cell" style="grid-column:2; grid-row:2;"></div><div class="cell" style="grid-column:3; grid-row:2;"></div><div class="cell" style="grid-column:4; grid-row:2;"></div><div class="cell" style="grid-column:5; grid-row:2;"></div><div class="cell" style="grid-column:6; grid-row:2;"></div><div class="cell" style="grid-column:7; grid-row:2;"></div><div class="cell time" style="grid-column:1; grid-row:3;">07:30</div><div class="cell" style="grid-column:2; grid-row:3;"></div><div class="cell" style="grid-column:3; grid-row:3;"></div><div class="cell" style="grid-column:4; grid-row:3;"></div><div class="cell" style="grid-column:5; grid-row:3;"></div><div class="cell" style="grid-column:6; grid-row:3;"></div><div class="cell" style="grid-column:7; grid-row:3;"></div><div class="cell time" style="grid-column:1; grid-row:4;">08:00</div><div class="cell" style="grid-column:2; grid-row:4;"></div><div class="cell" style="grid-column:3; grid-row:4;"></div><div class="cell" style="grid-column:4; grid-row:4;"></div><div class="cell" style="grid-column:5; grid-row:4;"></div><div class="cell" style="grid-column:6; grid-row:4;"></div><div class="cell" style="grid-column:7; grid-row:4;"></div><div class="cell time" style="grid-column:1; grid-row:5;">08:30</div><div class="cell" style="grid-column:2; grid-row:5;"></div><div class="cell" style="grid-column:3; grid-row:5;"></div><div class="cell" style="grid-column:4; grid-row:5;"></div><div class="cell" style="grid-column:5; grid-row:5;"></div><div class="cell" style="grid-column:6; grid-row:5;"></div><div class="cell" style="grid-column:7; grid-row:5;"></div><div class="cell time" style="grid-column:1; grid-row:6;">09:00</div><div class="cell" style="grid-column:2; grid-row:6;"></div><div class="cell" style="grid-column:3; grid-row:6;"></div><div class="cell" style="grid-column:4; grid-row:6;"></div><div class="cell" style="grid-column:5; grid-row:6;"></div><div class="cell" style="grid-column:6; grid-row:6;"></div><div class="cell" style="grid-column:7; grid-row:6;"></div><div class="cell time" style="grid-column:1; grid-row:7;">09:30</div><div class="cell" style="grid-column:2; grid-row:7;"></div><div class="cell" style="grid-column:3; grid-row:7;"></div><div class="cell" style="grid-column:4; grid-row:7;"></div><div class="cell" style="grid-column:5; grid-row:7;"></div><div class="cell" style="grid-column:6; grid-row:7;"></div><div class="cell" style="grid-column:7; grid-row:7;"></div><div class="cell time" style="grid-column:1; grid-row:8;">10:00</div><div class="cell" style="grid-column:2; grid-row:8;"></div><div class="cell" style="grid-column:3; grid-row:8;"></div><div class="cell" style="grid-column:4; grid-row:8;"></div><div class="cell" style="grid-column:5; grid-row:8;"></div><div class="cell" style="grid-column:6; grid-row:8;"></div><div class="cell" style="grid-column:7; grid-row:8;"></div><div class="cell time" style="grid-column:1; grid-row:9;">10:30</div><div class="cell" style="grid-column:2; grid-row:9;"></div><div class="cell" style="grid-column:3; grid-row:9;"></div><div class="cell" style="grid-column:4; grid-row:9;"></div><div class="cell" style="grid-column:5; grid-row:9;"></div><div class="cell" style="grid-column:6; grid-row:9;"></div><div class="cell" style="grid-column:7; grid-row:9;"></div><div class="cell time" style="grid-column:1; grid-row:10;">11:00</div><div class="cell" style="grid-column:2; grid-row:10;"></div><div class="cell" style="grid-column:3; grid-row:10;"></div><div class="cell" style="grid-column:4; grid-row:10;"></div><div class="cell" style="grid-column:5; grid-row:10;"></div><div class="cell" style="grid-column:6; grid-row:10;"></div><div class="cell" style="grid-column:7; grid-row:10;"></div><div class="cell time" style="grid-column:1; grid-row:11;">11:30</div><div class="cell" style="grid-column:2; grid-row:11;"></div><div class="cell" style="grid-column:3; grid-row:11;"></div><div class="cell" style="grid-column:4; grid-row:11;"></div><div class="cell" style="grid-column:5; grid-row:11;"></div><div class="cell" style="grid-column:6; grid-row:11;"></div><div class="cell" style="grid-column:7; grid-row:11;"></div><div class="cell time" style="grid-column:1; grid-row:12;">12:00</div><div class="cell" style="grid-column:2; grid-row:12;"></div><div class="cell" style="grid-column:3; grid-row:12;"></div><div class="cell" style="grid-column:4; grid-row:12;"></div><div class="cell" style="grid-column:5; grid-row:12;"></div><div class="cell" style="grid-column:6; grid-row:12;"></div><div class="cell" style="grid-column:7; grid-row:12;"></div><div class="cell time" style="grid-column:1; grid-row:13;">12:30</div><div class="cell" style="grid-column:2; grid-row:13;"></div><div class="cell" style="grid-column:3; grid-row:13;"></div><div class="cell" style="grid-column:4; grid-row:13;"></div><div class="cell" style="grid-column:5; grid-row:13;"></div><div class="cell" style="grid-column:6; grid-row:13;"></div><div class="cell" style="grid-column:7; grid-row:13;"></div><div class="cell time" style="grid-column:1; grid-row:14;">13:00</div><div class="cell" style="grid-column:2; grid-row:14;"></div><div class="cell" style="grid-column:3; grid-row:14;"></div><div class="cell" style="grid-column:4; grid-row:14;"></div><div class="cell" style="grid-column:5; grid-row:14;"></div><div class="cell" style="grid-column:6; grid-row:14;"></div><div class="cell" style="grid-column:7; grid-row:14;"></div><div class="cell time" style="grid-column:1; grid-row:15;">13:30</div><div class="cell" style="grid-column:2; grid-row:15;"></div><div class="cell" style="grid-column:3; grid-row:15;"></div><div class="cell" style="grid-column:4; grid-row:15;"></div><div class="cell" style="grid-column:5; grid-row:15;"></div><div class="cell" style="grid-column:6; grid-row:15;"></div><div class="cell" style="grid-column:7; grid-row:15;"></div><div class="cell time" style="grid-column:1; grid-row:16;">14:00</div><div class="cell" style="grid-column:2; grid-row:16;"></div><div class="cell" style="grid-column:3; grid-row:16;"></div><div class="cell" style="grid-column:4; grid-row:16;"></div><div class="cell" style="grid-column:5; grid-row:16;"></div><div class="cell" style="grid-column:6; grid-row:16;"></div><div class="cell" style="grid-column:7; grid-row:16;"></div><div class="cell time" style="grid-column:1; grid-row:17;">14:30</div><div class="cell" style="grid-column:2; grid-row:17;"></div><div class="cell" style="grid-column:3; grid-row:17;"></div><div class="cell" style="grid-column:4; grid-row:17;"></div><div class="cell" style="grid-column:5; grid-row:17;"></div><div class="cell" style="grid-column:6; grid-row:17;"></div><div class="cell" style="grid-column:7; grid-row:17;"></div><div class="cell time" style="grid-column:1; grid-row:18;">15:00</div><div class="cell" style="grid-column:2; grid-row:18;"></div><div class="cell" style="grid-column:3; grid-row:18;"></div><div class="cell" style="grid-column:4; grid-row:18;"></div><div class="cell" style="grid-column:5; grid-row:18;"></div><div class="cell" style="grid-column:6; grid-row:18;"></div><div class="cell" style="grid-column:7; grid-row:18;"></div><div class="cell time" style="grid-column:1; grid-row:19;">15:30</div><div class="cell" style="grid-column:2; grid-row:19;"></div><div class="cell" style="grid-column:3; grid-row:19;"></div><div class="cell" style="grid-column:4; grid-row:19;"></div><div class="cell" style="grid-column:5; grid-row:19;"></div><div class="cell" style="grid-column:6; grid-row:19;"></div><div class="cell" style="grid-column:7; grid-row:19;"></div><div class="cell time" style="grid-column:1; grid-row:20;">16:00</div><div class="cell" style="grid-column:2; grid-row:20;"></div><div class="cell" style="grid-column:3; grid-row:20;"></div><div class="cell" style="grid-column:4; grid-row:20;"></div><div class="cell" style="grid-column:5; grid-row:20;"></div><div class="cell" style="grid-column:6; grid-row:20;"></div><div class="cell" style="grid-column:7; grid-row:20;"></div><div class="cell time" style="grid-column:1; grid-row:21;">16:30</div><div class="cell" style="grid-column:2; grid-row:21;"></div><div class="cell" style="grid-column:3; grid-row:21;"></div><div class="cell" style="grid-column:4; grid-row:21;"></div><div class="cell" style="grid-column:5; grid-row:21;"></div><div class="cell" style="grid-column:6; grid-row:21;"></div><div class="cell" style="grid-column:7; grid-row:21;"></div><div class="cell time" style="grid-column:1; grid-row:22;">17:00</div><div class="cell" style="grid-column:2; grid-row:22;"></div><div class="cell" style="grid-column:3; grid-row:22;"></div><div class="cell" style="grid-column:4; grid-row:22;"></div><div class="cell" style="grid-column:5; grid-row:22;"></div><div class="cell" style="grid-column:6; grid-row:22;"></div><div class="cell" style="grid-column:7; grid-row:22;"></div><div class="cell time" style="grid-column:1; grid-row:23;">17:30</div><div class="cell" style="grid-column:2; grid-row:23;"></div><div class="cell" style="grid-column:3; grid-row:23;"></div><div class="cell" style="grid-column:4; grid-row:23;"></div><div class="cell" style="grid-column:5; grid-row:23;"></div><div class="cell" style="grid-column:6; grid-row:23;"></div><div class="cell" style="grid-column:7; grid-row:23;"></div><div class="cell time" style="grid-column:1; grid-row:24;">18:00</div><div class="cell" style="grid-column:2; grid-row:24;"></div><div class="cell" style="grid-column:3; grid-row:24;"></div><div class="cell" style="grid-column:4; grid-row:24;"></div><div class="cell" style="grid-column:5; grid-row:24;"></div><div class="cell" style="grid-column:6; grid-row:24;"></div><div class="cell" style="grid-column:7; grid-row:24;"></div><div class="cell time" style="grid-column:1; grid-row:25;">18:30</div><div class="cell" style="grid-column:2; grid-row:25;"></div><div class="cell" style="grid-column:3; grid-row:25;"></div><div class="cell" style="grid-column:4; grid-row:25;"></div><div class="cell" style="grid-column:5; grid-row:25;"></div><div class="cell" style="grid-column:6; grid-row:25;"></div><div class="cell" style="grid-column:7; grid-row:25;"></div><div class="cell time" style="grid-column:1; grid-row:26;">19:00</div><div class="cell" style="grid-column:2; grid-row:26;"></div><div class="cell" style="grid-column:3; grid-row:26;"></div><div class="cell" style="grid-column:4; grid-row:26;"></div><div class="cell" style="grid-column:5; grid-row:26;"></div><div class="cell" style="grid-column:6; grid-row:26;"></div><div class="cell" style="grid-column:7; grid-row:26;"></div><div class="cell time" style="grid-column:1; grid-row:27;">19:30</div><div class="cell" style="grid-column:2; grid-row:27;"></div><div class="cell" style="grid-column:3; grid-row:27;"></div><div class="cell" style="grid-column:4; grid-row:27;"></div><div class="cell" style="grid-column:5; grid-row:27;"></div><div class="cell" style="grid-column:6; grid-row:27;"></div><div class="cell" style="grid-column:7; grid-row:27;"></div><div class="cell time" style="grid-column:1; grid-row:28;">20:00</div><div class="cell" style="grid-column:2; grid-row:28;"></div><div class="cell" style="grid-column:3; grid-row:28;"></div><div class="cell" style="grid-column:4; grid-row:28;"></div><div class="cell" style="grid-column:5; grid-row:28;"></div><div class="cell" style="grid-column:6; grid-row:28;"></div><div class="cell" style="grid-column:7; grid-row:28;"></div><div class="cell time" style="grid-column:1; grid-row:29;">20:30</div><div class="cell" style="grid-column:2; grid-row:29;"></div><div class="cell" style="grid-column:3; grid-row:29;"></div><div class="cell" style="grid-column:4; grid-row:29;"></div><div class="cell" style="grid-column:5; grid-row:29;"></div><div class="cell" style="grid-column:6; grid-row:29;"></div><div class="cell" style="grid-column:7; grid-row:29;"></div><div class="unit" style="grid-column:2; grid-row:4 / 7;"><div class="block" style="background:#BBDEFB;"><div class="block-course">CS101</div><div class="block-meta">08:00–09:30 · R101</div><div class="block-meta">Dr. Lee</div></div><span class="tip">S101-L1 · Intro to Computing
+Dr. Lee
+Room 101
+Mon 08:00–09:30</span></div><div class="unit" style="grid-column:3; grid-row:4 / 7;"><div class="block" style="background:#BBDEFB;"><div class="block-course">CS101</div><div class="block-meta">08:00–09:30 · R101</div><div class="block-meta">Dr. Lee</div></div><span class="tip">S101-L2 · Intro to Computing
+Dr. Lee
+Room 101
+Tue 08:00–09:30</span></div><div class="unit" style="grid-column:2; grid-row:7 / 9;"><div class="block" style="background:#D1C4E9;"><div class="block-course">MATH101</div><div class="block-meta">09:30–10:30 · R101</div><div class="block-meta">Prof. Patel</div></div><span class="tip">S102-L1 · Calculus I
+Prof. Patel
+Room 101
+Mon 09:30–10:30</span></div><div class="unit" style="grid-column:3; grid-row:7 / 9;"><div class="block" style="background:#D1C4E9;"><div class="block-course">MATH101</div><div class="block-meta">09:30–10:30 · R101</div><div class="block-meta">Prof. Patel</div></div><span class="tip">S102-L2 · Calculus I
+Prof. Patel
+Room 101
+Tue 09:30–10:30</span></div><div class="unit" style="grid-column:2; grid-row:9 / 13;"><div class="block" style="background:#C8E6C9;"><div class="block-course">CS201</div><div class="block-meta">10:30–12:30 · R101</div><div class="block-meta">Dr. Kim</div></div><span class="tip">S201-L1 · Data Structures
+Dr. Kim
+Room 101
+Mon 10:30–12:30</span></div><div class="unit" style="grid-column:3; grid-row:9 / 13;"><div class="block" style="background:#C8E6C9;"><div class="block-course">CS201</div><div class="block-meta">10:30–12:30 · R101</div><div class="block-meta">Dr. Kim</div></div><span class="tip">S201-L2 · Data Structures
+Dr. Kim
+Room 101
+Tue 10:30–12:30</span></div><div class="unit" style="grid-column:2; grid-row:13 / 16;"><div class="block" style="background:#FFF3E0;"><div class="block-course">MATH202</div><div class="block-meta">12:30–14:00 · R101</div><div class="block-meta">Prof. Chen</div></div><span class="tip">S302-L1 · Linear Algebra
+Prof. Chen
+Room 101
+Mon 12:30–14:00</span></div><div class="unit" style="grid-column:3; grid-row:13 / 16;"><div class="block" style="background:#FFF3E0;"><div class="block-course">MATH202</div><div class="block-meta">12:30–14:00 · R101</div><div class="block-meta">Prof. Chen</div></div><span class="tip">S302-L2 · Linear Algebra
+Prof. Chen
+Room 101
+Tue 12:30–14:00</span></div><div class="unit" style="grid-column:4; grid-row:4 / 8;"><div class="block" style="background:#FCE4EC;"><div class="block-course">CS401</div><div class="block-meta">08:00–10:00 · R101</div><div class="block-meta">Dr. Okafor</div></div><span class="tip">S401-L1 · Algorithms
+Dr. Okafor
+Room 101
+Wed 08:00–10:00</span></div><div class="unit" style="grid-column:3; grid-row:16 / 20;"><div class="block" style="background:#FCE4EC;"><div class="block-course">CS401</div><div class="block-meta">14:00–16:00 · R101</div><div class="block-meta">Dr. Okafor</div></div><span class="tip">S401-L2 · Algorithms
+Dr. Okafor
+Room 101
+Tue 14:00–16:00</span></div></div>
+  <table class="table">
+    <thead><tr>
+      <th>Section</th><th>Course</th><th>Instructor</th><th>Room</th><th>Day</th><th>Start</th><th>End</th>
+    </tr></thead>
+    <tbody>
+      <tr>
+            <td>S101-L1</td>
+            <td>Intro to Computing</td>
+            <td>Dr. Lee</td>
+            <td>Room 101</td>
+            <td>Mon</td>
+            <td>08:00</td>
+            <td>09:30</td>
+          </tr><tr>
+            <td>S102-L1</td>
+            <td>Calculus I</td>
+            <td>Prof. Patel</td>
+            <td>Room 101</td>
+            <td>Mon</td>
+            <td>09:30</td>
+            <td>10:30</td>
+          </tr><tr>
+            <td>S201-L1</td>
+            <td>Data Structures</td>
+            <td>Dr. Kim</td>
+            <td>Room 101</td>
+            <td>Mon</td>
+            <td>10:30</td>
+            <td>12:30</td>
+          </tr><tr>
+            <td>S302-L1</td>
+            <td>Linear Algebra</td>
+            <td>Prof. Chen</td>
+            <td>Room 101</td>
+            <td>Mon</td>
+            <td>12:30</td>
+            <td>14:00</td>
+          </tr><tr>
+            <td>S101-L2</td>
+            <td>Intro to Computing</td>
+            <td>Dr. Lee</td>
+            <td>Room 101</td>
+            <td>Tue</td>
+            <td>08:00</td>
+            <td>09:30</td>
+          </tr><tr>
+            <td>S102-L2</td>
+            <td>Calculus I</td>
+            <td>Prof. Patel</td>
+            <td>Room 101</td>
+            <td>Tue</td>
+            <td>09:30</td>
+            <td>10:30</td>
+          </tr><tr>
+            <td>S201-L2</td>
+            <td>Data Structures</td>
+            <td>Dr. Kim</td>
+            <td>Room 101</td>
+            <td>Tue</td>
+            <td>10:30</td>
+            <td>12:30</td>
+          </tr><tr>
+            <td>S302-L2</td>
+            <td>Linear Algebra</td>
+            <td>Prof. Chen</td>
+            <td>Room 101</td>
+            <td>Tue</td>
+            <td>12:30</td>
+            <td>14:00</td>
+          </tr><tr>
+            <td>S401-L2</td>
+            <td>Algorithms</td>
+            <td>Dr. Okafor</td>
+            <td>Room 101</td>
+            <td>Tue</td>
+            <td>14:00</td>
+            <td>16:00</td>
+          </tr><tr>
+            <td>S401-L1</td>
+            <td>Algorithms</td>
+            <td>Dr. Okafor</td>
+            <td>Room 101</td>
+            <td>Wed</td>
+            <td>08:00</td>
+            <td>10:00</td>
+          </tr>
+    </tbody>
+  </table>
+</main>
 </body>
 </html>

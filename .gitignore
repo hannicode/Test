@@ -1,0 +1,16 @@
+# Dependencies (there are none right now, but keep this ready)
+node_modules/
+
+# Python leftovers / caches
+__pycache__/
+*.pyc
+
+# Files the app creates while saving (kept on disk, not in git)
+*.tmp
+*.bak
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
