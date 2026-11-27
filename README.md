@@ -34,8 +34,8 @@ actually used.
 
 The sidebar is the flow, in four numbered steps:
 
-1. **Data** — add sections, professors, subjects, and rooms. Set the teaching
-   grid (days and hours).
+1. **Data** — add sections, professors, subjects, and rooms. Type them in, or
+   import a CSV from a spreadsheet. Set the teaching grid (days and hours).
 2. **Generate** — the solver runs in the server and takes up to ~5 seconds.
 3. **Review** — inspect the result. The preview shows what could not be placed
    and why. Open any professor to see their personal schedule.
@@ -82,6 +82,9 @@ every remaining slot clashing with something else).
 | `data.js` | Reads and writes the CSV data |
 | `csv.js` | CSV parsing and safe (atomic) file writing |
 | `validate.js` | Rules that decide whether a form may be saved |
+| `import.js` | Parsing, merging and diffing an imported CSV |
+| `backup.js` | The one-file backup and its restore |
+| `upload.js` | Reading a file out of a form |
 | `test.js` | The checks behind `npm test` |
 | `web/app.css` | Styling for the app shell |
 | `data/` | Your data — this is the source of truth |
@@ -106,17 +109,61 @@ and add everything through the app. The sample stays available in git history.
 
 ---
 
+## Importing from a spreadsheet
+
+**Import & backup → Import.** Choose what you are importing, then upload a CSV
+or paste it. In Excel: *File → Save as → CSV*.
+
+You will see a diff before anything is written:
+
+| | Meaning |
+| --- | --- |
+| **New** | In your file, not on disk yet |
+| **Changed** | In both, with different values — the page shows each field |
+| **Unchanged** | Identical, nothing to do |
+| **Not in your file** | On disk but missing from the file |
+
+Then pick one:
+
+- **Merge** updates what was in the file and keeps everything else. This is the
+  normal choice — a file with just `section_id,instructor` reassigns teachers
+  without touching anything else.
+- **Replace** makes the file the whole list, deleting rows it does not mention.
+
+Only the id column is required. Columns you leave out keep their current values
+on a merge, so partial files are the easy path. An import that would produce a
+broken file — a missing course id, a duplicate id, an unknown day — is refused
+as a whole, with the line number. Nothing is ever half-written.
+
+---
+
+## Backups
+
+**Import & backup → Backups.** *Download backup* writes one JSON file holding
+every CSV in `data/` (sections, rooms, grid, settings, and one entry per
+professor and subject).
+
+Restoring is also two steps: choose the file, see which files would be changed,
+added or removed, then confirm. A restore deletes data files that are not in the
+backup, because that is what "restore" means — they are listed before you
+confirm. Each file keeps a `.bak` copy of its previous version either way.
+
+The zero-tech option still works: copy the whole `data` folder somewhere safe.
+
+---
+
 ## Tests
 
 ```powershell
 npm test
 ```
 
-Eleven checks, no framework: the data folder is complete, every section points
+Sixteen checks, no framework: the data folder is complete, every section points
 at a real professor and subject, the solver places all 60 sections without
 breaking a hard constraint, the forms refuse broken input, CSV survives commas
-and quotes, and every page answers. It never saves anything, so it is safe to run
-at any time.
+and quotes, an import changes nothing until it is applied, a backup restores
+exactly what it captured, and every page answers. It never saves anything, so it
+is safe to run at any time.
 
 ---
 

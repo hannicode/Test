@@ -270,6 +270,157 @@ test("every page answers", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+
+async function makeTempWorkspace() {
+  const os = await import("node:os");
+  const fs = await import("node:fs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "class-scheduler-test-"));
+  fs.cpSync(DATA_DIR, dir, { recursive: true });
+  return dir;
+}
+
+test("an import shows what it would change without writing", async () => {
+  const fs = await import("node:fs");
+  const { prepareImport } = await import("./import.js");
+  const dir = await makeTempWorkspace();
+
+  try {
+    const scratch = loadData({ dataDir: dir, outDir: dir });
+    const csv = [
+      "section_id,course_id,instructor",
+      "CS101-L1,CS101,Dr. New Teacher",
+      "CS101-L9,CS101,Dr. Amara Okafor",
+    ].join("\n");
+
+    const prepared = prepareImport("sections", csv, scratch);
+
+    assert.deepEqual(prepared.errors, [], prepared.errors.join("; "));
+    assert.equal(prepared.diff.added.length, 1, "expected one new section");
+    assert.equal(prepared.diff.changed.length, 1, "expected one changed section");
+    assert.equal(prepared.diff.unchanged.length, 0);
+    assert.equal(prepared.diff.missing.length, scratch.sections.length - 1);
+
+    // Nothing may be written during preparation.
+    const onDisk = loadData({ dataDir: dir, outDir: dir });
+    assert.equal(onDisk.sections.length, scratch.sections.length, "prepare wrote to disk");
+    assert.equal(
+      onDisk.sections.find((section) => section.section_id === "CS101-L1").instructor,
+      "Dr. Amara Okafor",
+      "prepare changed a section on disk"
+    );
+
+    const { applyImport } = await import("./import.js");
+    applyImport("sections", prepared, "merge", scratch);
+
+    const after = loadData({ dataDir: dir, outDir: dir });
+    assert.equal(after.sections.length, scratch.sections.length + 1, "merge did not add the row");
+    assert.equal(
+      after.sections.find((section) => section.section_id === "CS101-L1").instructor,
+      "Dr. New Teacher",
+      "merge did not update the row"
+    );
+
+    // A partial import must leave every other file alone.
+    assert.equal(after.professorList.length, scratch.professorList.length, "merge touched professors");
+    assert.equal(fs.readdirSync(path.join(dir, "professors")).length, scratch.professorList.length);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an import that would break a file is refused", async () => {
+  const fs = await import("node:fs");
+  const { prepareImport } = await import("./import.js");
+  const dir = await makeTempWorkspace();
+
+  try {
+    const scratch = loadData({ dataDir: dir, outDir: dir });
+
+    const noCourse = prepareImport("sections", "section_id,course_id\nNEW-1,", scratch);
+    assert.ok(noCourse.errors.length > 0, "a new section without a course was accepted");
+
+    const duplicate = prepareImport("sections", "section_id,course_id\nNEW-1,CS101\nNEW-1,CS101", scratch);
+    assert.ok(
+      duplicate.errors.some((error) => error.includes("appears twice")),
+      duplicate.errors.join("; ")
+    );
+
+    // Still untouched.
+    assert.equal(loadData({ dataDir: dir, outDir: dir }).sections.length, scratch.sections.length);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("one-click backup restores exactly what it captured", async () => {
+  const fs = await import("node:fs");
+  const { createBundle, bundleToJson, parseBundle, summariseRestore, applyRestore } = await import("./backup.js");
+  const dir = await makeTempWorkspace();
+
+  try {
+    const bundle = createBundle(dir);
+    const parsed = parseBundle(bundleToJson(bundle));
+    assert.deepEqual(parsed.errors, undefined, "a fresh backup failed to parse");
+
+    const same = summariseRestore(parsed.bundle, dir);
+    assert.equal(same.changed.length + same.added.length + same.removed.length, 0, "a fresh backup showed changes");
+
+    // Change a file and add a stray one.
+    const sectionsFile = path.join(dir, "sections.csv");
+    const original = fs.readFileSync(sectionsFile, "utf8");
+    fs.writeFileSync(sectionsFile, `${original}JUNK-1,CS101,Junk,Dr. Amara Okafor,,,`);
+    fs.writeFileSync(path.join(dir, "professors", "P999.csv"), "professor_id,name\nP999,Stray\n");
+
+    const dirty = summariseRestore(parsed.bundle, dir);
+    assert.deepEqual(dirty.changed, ["sections.csv"]);
+    assert.deepEqual(dirty.removed, ["professors/P999.csv"]);
+
+    applyRestore(parsed.bundle, dir);
+    assert.equal(fs.readFileSync(sectionsFile, "utf8"), original, "restore did not put the file back");
+    assert.equal(fs.existsSync(path.join(dir, "professors", "P999.csv")), false, "restore left a stray file");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a backup cannot write outside the data folder", async () => {
+  const { parseBundle } = await import("./backup.js");
+  const parsed = parseBundle(
+    JSON.stringify({
+      format: "class-scheduler-backup",
+      files: { "../escape.csv": "x", "sections.csv": "a", "grid.csv": "b", "rooms.csv": "c" },
+    })
+  );
+  assert.ok(parsed.errors?.length > 0, "a path outside the data folder was accepted");
+});
+
+// ---------------------------------------------------------------------------
+// Uploads
+// ---------------------------------------------------------------------------
+
+test("a multipart upload is split into fields and a file", async () => {
+  const { parseMultipart } = await import("./upload.js");
+  const boundary = "----test-boundary";
+  const body = Buffer.from(
+    `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="kind"\r\n\r\n` +
+      `sections\r\n` +
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="sections.csv"\r\n` +
+      `Content-Type: text/csv\r\n\r\n` +
+      `section_id,course_id\r\nA,B\r\n` +
+      `--${boundary}--\r\n`
+  );
+
+  const { fields, files } = parseMultipart(body, `multipart/form-data; boundary=${boundary}`);
+  assert.equal(fields.kind, "sections");
+  assert.equal(files.file.filename, "sections.csv");
+  assert.equal(files.file.text, "section_id,course_id\r\nA,B");
+});
+
+// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 

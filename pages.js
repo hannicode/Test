@@ -229,6 +229,7 @@ function shell(ctx, body) {
       ${navItem("/professors", "Professors", "professors", active, chips.professors)}
       ${navItem("/subjects", "Subjects", "subjects", active, chips.subjects)}
       ${navItem("/rooms", "Rooms & grid", "rooms", active, chips.rooms)}
+      ${navItem("/import", "Import & backup", "import", active, "")}
 
       <div class="nav-step"><span class="step-num">2</span>Generate</div>
       ${navItem("/generate", "Generate", "generate", active, chips.generate)}
@@ -972,6 +973,245 @@ export function gridPage(ctx) {
   return shell({ ...ctx, title: "Teaching grid", active: "rooms" }, body);
 }
 
+// --- import and backup -----------------------------------------------------
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function importPage(ctx) {
+  const { kinds = [], kind, err, msg } = ctx;
+  const chosen = kinds.find((entry) => entry.value === kind) ?? kinds[0];
+  if (!chosen) return emptyState("Nothing to import", "This build has no import types.", "/timetable", "Back");
+
+  const body =
+    pageHead(
+      "Import & backup",
+      "Paste or upload a CSV. You will see exactly what changes before anything is saved.",
+      ""
+    ) +
+    (err ? `<div class="banner banner-err">${escapeHtml(err)}</div>` : "") +
+    (msg ? `<div class="banner banner-ok">${escapeHtml(msg)}</div>` : "") +
+    `<form class="form" method="post" action="/import/preview" enctype="multipart/form-data">
+      <div class="grid2">
+        ${selectField("kind", "What are you importing?", kinds.map((entry) => [entry.value, entry.label]), chosen.value)}
+        <div class="field">
+          <label for="f-file">CSV file</label>
+          <input id="f-file" type="file" name="file" accept=".csv,text/csv,text/plain">
+          <div class="hint">In Excel: File → Save as → CSV.</div>
+        </div>
+      </div>
+      <div class="field">
+        <label for="f-text">…or paste it</label>
+        <textarea id="f-text" name="text" rows="8" spellcheck="false" placeholder="${escapeHtml(
+          "section_id,course_id,course_name,instructor,capacity_needed,duration_minutes,allowed_days"
+        )}"></textarea>
+        <div class="hint">If you do both, the uploaded file wins.</div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary">Preview import</button>
+        <a class="btn btn-ghost" href="/sections">Cancel</a>
+      </div>
+    </form>
+    <div class="panel">
+      <h2>What <strong>${escapeHtml(chosen.label.toLowerCase())}</strong> need</h2>
+      ${kinds
+        .map(
+          (entry) => `<p><strong>${escapeHtml(entry.label)}</strong><br><code>${escapeHtml(entry.columns.join(","))}</code></p>`
+        )
+        .join("")}
+      <p class="muted">Only <code>${escapeHtml(chosen.columns[0])}</code> is required. Columns you leave out keep their current values when merging, so a file with just ids and teachers works.</p>
+    </div>
+    <div class="panel">
+      <h2>Backups</h2>
+      <p>Every data file in one download, and the way back.</p>
+      <a class="btn" href="/backup">Open backups →</a>
+    </div>`;
+
+  return shell({ ...ctx, title: "Import & backup", active: "import" }, body);
+}
+
+function addedTable(columns, rows) {
+  return `<div class="scroll-x"><table class="table">
+    <thead><tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${rows
+        .map(
+          ({ row }) =>
+            `<tr>${columns
+              .map((column) => `<td>${row[column] === "" || row[column] === undefined ? '<span class="muted">—</span>' : escapeHtml(row[column])}</td>`)
+              .join("")}</tr>`
+        )
+        .join("")}
+    </tbody>
+  </table></div>`;
+}
+
+function changedTable(changed) {
+  return `<table class="table">
+    <thead><tr><th>Id</th><th>What changes</th></tr></thead>
+    <tbody>
+      ${changed
+        .map(
+          ({ id, changes }) => `<tr>
+            <td><strong>${escapeHtml(id)}</strong></td>
+            <td>${changes
+              .map(
+                (change) =>
+                  `<div class="change"><code>${escapeHtml(change.column)}</code> ${
+                    change.from === "" ? "<em>(blank)</em>" : escapeHtml(change.from)
+                  } <span class="arrow">→</span> ${
+                    change.to === "" ? "<em>(blank)</em>" : escapeHtml(change.to)
+                  }</div>`
+              )
+              .join("")}</td>
+          </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>`;
+}
+
+export function importPreviewPage(ctx) {
+  const { prepared } = ctx;
+  const { label, errors, warnings, diff, presentColumns, missingColumns } = prepared;
+  const blocked = errors.length > 0;
+
+  const actions = blocked
+    ? `<form method="post" action="/import/cancel"><button class="btn btn-ghost">Cancel</button></form>`
+    : `<form method="post" action="/import/apply"><input type="hidden" name="mode" value="merge"><button class="btn btn-primary">Merge into existing</button></form>
+       <form method="post" action="/import/apply"><input type="hidden" name="mode" value="replace"><button class="btn btn-danger">Replace everything</button></form>
+       <form method="post" action="/import/cancel"><button class="btn btn-ghost">Cancel</button></form>`;
+
+  let body = pageHead(
+    blocked ? `Import blocked — ${label.toLowerCase()}` : `Import preview — ${label.toLowerCase()}`,
+    blocked
+      ? "Nothing has been written. Fix the problems below and preview again."
+      : "Nothing has been written yet. Choose merge or replace to apply it.",
+    actions
+  );
+
+  body += messages(errors, warnings);
+
+  if (missingColumns.length > 0) {
+    body += `<div class="banner banner-warn">Your file does not include <code>${missingColumns
+      .map(escapeHtml)
+      .join("</code>, <code>")}</code>. <strong>Merge</strong> keeps the current values; <strong>Replace</strong> clears them.</div>`;
+  }
+
+  body += `<div class="stat-row">
+    ${stat(diff.added.length, "new")}
+    ${stat(diff.changed.length, "changed")}
+    ${stat(diff.unchanged.length, "unchanged")}
+    ${stat(diff.missing.length, "kept")}
+  </div>`;
+
+  if (blocked) {
+    body += `<div class="panel"><h2>Why it stopped</h2><p class="muted">An import that would break a file is refused as a whole — no partial writes.</p></div>`;
+    return shell({ ...ctx, title: "Import preview", active: "import" }, body);
+  }
+
+  if (diff.added.length > 0) {
+    body += `<h2 class="section-title">New (${diff.added.length})</h2>`;
+    body += addedTable(presentColumns, diff.added);
+  }
+
+  if (diff.changed.length > 0) {
+    body += `<h2 class="section-title">Changed (${diff.changed.length})</h2>`;
+    body += changedTable(diff.changed);
+  }
+
+  if (diff.missing.length > 0) {
+    body += `<h2 class="section-title">Not in your file (${diff.missing.length})</h2>`;
+    body += `<div class="banner banner-warn">These exist on disk. <strong>Merge</strong> keeps them; <strong>Replace</strong> deletes them.</div>`;
+    body += `<p>${diff.missing
+      .map(({ id }) => `<code>${escapeHtml(id)}</code>`)
+      .join(" ")}</p>`;
+  }
+
+  return shell({ ...ctx, title: "Import preview", active: "import" }, body);
+}
+
+export function backupPage(ctx) {
+  const { bundle, err, msg } = ctx;
+
+  const body =
+    pageHead("Backups", "Every data file in one download, and the way back.", "") +
+    (err ? `<div class="banner banner-err">${escapeHtml(err)}</div>` : "") +
+    (msg ? `<div class="banner banner-ok">${escapeHtml(msg)}</div>` : "") +
+    `<div class="panel">
+      <h2>Download</h2>
+      <p>One JSON file holding every CSV in the data folder — sections, rooms, the grid, professors and subjects.</p>
+      <p class="muted">${bundle.fileCount} files · ${formatBytes(bundle.bytes)}</p>
+      <a class="btn btn-primary" href="/backup/download">Download backup</a>
+    </div>
+    <div class="panel">
+      <h2>Restore</h2>
+      <p>Choose a backup file. You will see what changes before anything is written, and each file keeps one <code>.bak</code> copy of its previous version.</p>
+      <form class="form" method="post" action="/backup/restore/preview" enctype="multipart/form-data">
+        <div class="field">
+          <label for="f-bundle">Backup file</label>
+          <input id="f-bundle" type="file" name="file" accept=".json,application/json">
+        </div>
+        <div class="form-actions">
+          <button class="btn">Preview restore</button>
+        </div>
+      </form>
+    </div>
+    <div class="panel muted-panel">
+      A restore deletes data files that are not in the backup, because restoring means “make it look like that backup”. The deleted files are listed before you confirm.
+    </div>`;
+
+  return shell({ ...ctx, title: "Backups", active: "import" }, body);
+}
+
+export function restorePreviewPage(ctx) {
+  const { summary, createdAt } = ctx;
+  const { added, changed, removed, same } = summary;
+  const nothingToDo = added.length === 0 && changed.length === 0 && removed.length === 0;
+
+  const actions = nothingToDo
+    ? `<form method="post" action="/backup/restore/cancel"><button class="btn btn-ghost">Back</button></form>`
+    : `<form method="post" action="/backup/restore/apply"><button class="btn btn-primary">Restore this backup</button></form>
+       <form method="post" action="/backup/restore/cancel"><button class="btn btn-ghost">Cancel</button></form>`;
+
+  let body = pageHead(
+    "Restore preview",
+    nothingToDo ? "This backup matches what is already on disk." : "Nothing has been written yet.",
+    actions
+  );
+
+  body += `<div class="stat-row">
+    ${stat(changed.length, "files changed")}
+    ${stat(added.length, "files added")}
+    ${stat(removed.length, "files removed")}
+    ${stat(same.length, "unchanged")}
+  </div>`;
+
+  const list = (items) => items.map((file) => `<code>${escapeHtml(file)}</code>`).join(" ");
+
+  if (changed.length > 0) body += `<h2 class="section-title">Changed</h2><p>${list(changed)}</p>`;
+  if (added.length > 0) body += `<h2 class="section-title">Added</h2><p>${list(added)}</p>`;
+  if (removed.length > 0) {
+    body += `<h2 class="section-title">Removed</h2>`;
+    body += `<div class="banner banner-warn">These files are not in the backup and will be deleted.</div>`;
+    body += `<p>${list(removed)}</p>`;
+  }
+
+  if (createdAt) {
+    body += `<p class="muted">Backup taken ${escapeHtml(formatWhen(createdAt))}.</p>`;
+  }
+
+  return shell({ ...ctx, title: "Restore preview", active: "import" }, body);
+}
+
+function formatWhen(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
 // --- misc ------------------------------------------------------------------
 
 export function helpPage(ctx) {
@@ -979,6 +1219,7 @@ export function helpPage(ctx) {
     `<div class="panel">
       <h2>1 · Data</h2>
       <p>Add <strong>rooms</strong>, <strong>professors</strong>, <strong>subjects</strong> and <strong>sections</strong>. A section's instructor must match a professor's name; its course id must match a subject id.</p>
+      <p>Already have a spreadsheet? Use <a href="/import">Import</a>: upload or paste the CSV and see what changes before anything is written. <strong>Merge</strong> keeps rows your file does not mention; <strong>Replace</strong> makes the file the whole list.</p>
       <p class="muted">Blank duration or capacity on a section falls back to the subject default.</p>
     </div>
     <div class="panel">
@@ -992,6 +1233,11 @@ export function helpPage(ctx) {
     <div class="panel">
       <h2>4 · Export</h2>
       <p>Write <code>schedule.html</code>: one self-contained file you can double-click or share. It is built from the saved schedule, not from an unsaved preview.</p>
+    </div>
+    <div class="panel">
+      <h2>Backups</h2>
+      <p><a href="/backup">Download one file</a> holding every CSV in the data folder, and restore from it later. A restore shows exactly which files change, and deletes data files that are not in the backup — they are listed before you confirm.</p>
+      <p class="muted">Every file also keeps a <code>.bak</code> copy of its previous version.</p>
     </div>
     <div class="panel">
       <h2>Files on disk</h2>

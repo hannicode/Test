@@ -37,6 +37,22 @@ import {
   validateRoom,
   validateGrid,
 } from "./validate.js";
+import { readSubmission } from "./upload.js";
+import {
+  prepareImport,
+  applyImport,
+  importKinds,
+  importColumns,
+  describeDiff,
+} from "./import.js";
+import {
+  createBundle,
+  bundleToJson,
+  parseBundle,
+  summariseRestore,
+  applyRestore,
+  describeBundle,
+} from "./backup.js";
 import * as pages from "./pages.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -69,6 +85,23 @@ function load() {
 // The generated-but-not-saved schedule. It lives here in memory only, which is
 // why restarting the server throws an unsaved preview away.
 let preview = null;
+
+// An import or a restore that has been checked but not applied yet. Same idea:
+// memory only, and lost on restart, which is the safest place for it.
+let pendingImport = null;
+let pendingRestore = null;
+
+/** Destination list page after importing each kind. */
+const IMPORT_BACK = {
+  sections: "/sections",
+  professors: "/professors",
+  subjects: "/subjects",
+  rooms: "/rooms",
+};
+
+function importKindsForPage() {
+  return importKinds().map((kind) => ({ ...kind, columns: importColumns(kind.value) }));
+}
 
 // --- small helpers ---------------------------------------------------------
 
@@ -883,6 +916,143 @@ route("POST", "/grid", async ({ req }) => {
   return flash("/rooms", "Teaching grid saved.", warnings);
 });
 
+// --- import and backup -----------------------------------------------------
+
+route("GET", "/import", ({ query }) => ({
+  html: pages.importPage(baseContext({
+    title: "Import & backup",
+    active: "import",
+    kinds: importKindsForPage(),
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("POST", "/import/preview", async ({ req }) => {
+  try {
+    const { form, upload } = await readSubmission(req);
+    const kind = String(form.get("kind") ?? "sections");
+    const text = upload && upload.text.trim() !== "" ? upload.text : String(form.get("text") ?? "");
+    pendingImport = { kind, prepared: prepareImport(kind, text, load()) };
+    return { redirect: "/import/preview" };
+  } catch (error) {
+    return { redirect: `/import?err=${encodeURIComponent(error.message)}` };
+  }
+});
+
+route("GET", "/import/preview", () => {
+  if (!pendingImport) return { redirect: "/import" };
+  return {
+    html: pages.importPreviewPage(baseContext({
+      title: "Import preview",
+      active: "import",
+      prepared: pendingImport.prepared,
+    })),
+  };
+});
+
+route("POST", "/import/apply", async ({ req }) => {
+  if (!pendingImport) {
+    return { redirect: `/import?err=${encodeURIComponent("That import has expired. Start again.")}` };
+  }
+
+  const { form } = await readSubmission(req);
+  const mode = form.get("mode") === "replace" ? "replace" : "merge";
+  const { kind, prepared } = pendingImport;
+
+  if (prepared.errors.length > 0) {
+    pendingImport = null;
+    return { redirect: `/import?err=${encodeURIComponent("That import had problems and was not applied.")}` };
+  }
+
+  const count = applyImport(kind, prepared, mode, load());
+  pendingImport = null;
+
+  const what = mode === "replace" ? "replaced" : "merged";
+  return flash(
+    IMPORT_BACK[kind] ?? "/import",
+    `${count} ${prepared.label.toLowerCase()} ${what} — ${describeDiff(prepared.diff)}.`
+  );
+});
+
+route("POST", "/import/cancel", () => {
+  pendingImport = null;
+  return flash("/import", "Import cancelled. Nothing was written.");
+});
+
+route("GET", "/backup", ({ query }) => {
+  const data = load();
+  return {
+    html: pages.backupPage(baseContext({
+      title: "Backups",
+      active: "import",
+      bundle: describeBundle(createBundle(data.dataDir)),
+      msg: query.get("msg"),
+      err: query.get("err"),
+    })),
+  };
+});
+
+route("GET", "/backup/download", () => {
+  const data = load();
+  const stamp = new Date().toISOString().slice(0, 10);
+  return {
+    file: {
+      name: `class-scheduler-backup-${stamp}.json`,
+      type: "application/json; charset=utf-8",
+      body: bundleToJson(createBundle(data.dataDir)),
+    },
+  };
+});
+
+route("POST", "/backup/restore/preview", async ({ req }) => {
+  try {
+    const { form, upload } = await readSubmission(req);
+    const text = upload && upload.text.trim() !== "" ? upload.text : String(form.get("text") ?? "");
+    const parsed = parseBundle(text);
+    if (parsed.errors) {
+      return { redirect: `/backup?err=${encodeURIComponent(parsed.errors.join(" "))}` };
+    }
+
+    const data = load();
+    pendingRestore = {
+      bundle: parsed.bundle,
+      summary: summariseRestore(parsed.bundle, data.dataDir),
+      createdAt: parsed.bundle.createdAt,
+    };
+    return { redirect: "/backup/restore/preview" };
+  } catch (error) {
+    return { redirect: `/backup?err=${encodeURIComponent(error.message)}` };
+  }
+});
+
+route("GET", "/backup/restore/preview", () => {
+  if (!pendingRestore) return { redirect: "/backup" };
+  return {
+    html: pages.restorePreviewPage(baseContext({
+      title: "Restore preview",
+      active: "import",
+      summary: pendingRestore.summary,
+      createdAt: pendingRestore.createdAt,
+    })),
+  };
+});
+
+route("POST", "/backup/restore/apply", () => {
+  if (!pendingRestore) {
+    return { redirect: `/backup?err=${encodeURIComponent("That restore has expired. Choose the file again.")}` };
+  }
+
+  applyRestore(pendingRestore.bundle, load().dataDir);
+  pendingRestore = null;
+  return flash("/backup", "Backup restored.");
+});
+
+route("POST", "/backup/restore/cancel", () => {
+  pendingRestore = null;
+  return flash("/backup", "Restore cancelled. Nothing was written.");
+});
+
 // --- help and fallbacks ----------------------------------------------------
 
 route("GET", "/help", ({ query }) => ({
@@ -916,6 +1086,16 @@ async function handle(req, res) {
       const result = await entry.handler({ params, query: url.searchParams, req });
       if (result.redirect) return redirect(res, result.redirect);
       if (result.css) return sendCss(res, result.css);
+      if (result.file) {
+        res.writeHead(200, {
+          "content-type": result.file.type,
+          "content-disposition": `attachment; filename="${result.file.name}"`,
+          "content-length": Buffer.byteLength(result.file.body),
+          "cache-control": "no-store",
+        });
+        res.end(result.file.body);
+        return;
+      }
       return sendHtml(res, result.html, result.status ?? 200);
     } catch (error) {
       console.error(error);

@@ -495,7 +495,9 @@ a.banner-warn:hover {
 input[type="text"],
 input[type="number"],
 input[type="time"],
-select {
+input[type="file"],
+select,
+textarea {
   padding: 8px 10px;
   border: 1px solid #d4d4d8;
   border-radius: 8px;
@@ -505,16 +507,44 @@ select {
   width: 100%;
 }
 
+textarea {
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+input[type="file"] {
+  border-style: dashed;
+  background: #fafafb;
+  cursor: pointer;
+}
+
 input[readonly] {
   background: #f8f9fb;
   color: var(--muted);
 }
 
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid #c7d2fe;
   border-color: #818cf8;
   outline-offset: 1px;
+}
+
+.scroll-x {
+  overflow-x: auto;
+}
+
+.change {
+  font-size: 12px;
+  margin: 3px 0;
+}
+
+.change .arrow {
+  color: var(--muted);
+  margin: 0 4px;
 }
 
 .day-row {
