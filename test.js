@@ -6,17 +6,20 @@
 // What it protects:
 //   - the data folder is complete and every section points at something real
 //   - the solver places everything without breaking a hard constraint
+//   - a locked class stays pinned when the rest is re-solved
 //   - the forms refuse structurally broken input
+//   - imports, backups and versions round-trip without losing data
 //   - every page answers, so a renamed function cannot take the app down
 //
-// It never writes to disk: it generates a preview in memory and never saves it.
+// It never writes to the repo: the checks that need to save copy data/ into a
+// temporary workspace and delete it afterwards.
 
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadData, applySubjectDefaults } from "./data.js";
-import { solve } from "./solver.js";
+import { solve, checkLocks } from "./solver.js";
 import { validateSection, validateRoom, validateGrid } from "./validate.js";
 import { objectsToCsv, csvToObjects } from "./csv.js";
 import { startServer } from "./server.js";
@@ -149,6 +152,41 @@ test("the solution breaks no hard constraint", () => {
   assert.deepEqual(problems, [], problems.slice(0, 10).join("\n"));
 });
 
+test("a locked class stays where it was pinned", () => {
+  assert.ok(solution, "the solver test did not run");
+  const pinned = solution[0];
+  const lock = {
+    section_id: pinned.section.section_id,
+    room_id: pinned.room.id,
+    day: pinned.day,
+    start: pinned.start,
+  };
+
+  const { kept, dropped } = checkLocks({
+    locked: [lock],
+    sections: effectiveSections,
+    rooms: data.rooms,
+    grid: data.grid,
+    professors: data.professors,
+  });
+  assert.equal(dropped.length, 0, `the lock was rejected: ${dropped[0]?.reason}`);
+
+  const again = solve({
+    sections: effectiveSections,
+    rooms: data.rooms,
+    grid: data.grid,
+    professors: data.professors,
+    budgetMs: 4000,
+    locked: kept,
+  });
+
+  const row = again.find((placement) => placement.section.section_id === lock.section_id);
+  assert.ok(row, "the locked section is missing from the new solution");
+  assert.equal(row.room.id, lock.room_id, "the locked section changed room");
+  assert.equal(row.day, lock.day, "the locked section changed day");
+  assert.equal(row.start, lock.start, "the locked section changed start time");
+});
+
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
@@ -227,6 +265,7 @@ test("every page answers", async () => {
     const pages = [
       "/timetable",
       "/generate",
+      "/versions",
       "/sections",
       "/sections/new",
       "/professors",
@@ -394,6 +433,47 @@ test("a backup cannot write outside the data folder", async () => {
     })
   );
   assert.ok(parsed.errors?.length > 0, "a path outside the data folder was accepted");
+});
+
+test("a version round-trips through the index", async () => {
+  const fs = await import("node:fs");
+  const { saveVersion, readVersions, readVersion, setCurrentVersion, deleteVersion } = await import("./data.js");
+  const dir = await makeTempWorkspace();
+
+  try {
+    const scratch = loadData({ dataDir: dir, outDir: dir });
+    const placements = [
+      {
+        section_id: "TEST-1",
+        course_id: "CS101",
+        course_name: "Intro",
+        instructor: "Dr. Amara Okafor",
+        room_id: "R101",
+        room_name: "Room 101",
+        day: "Mon",
+        start: 420,
+        end: 510,
+      },
+    ];
+
+    const version = saveVersion(scratch, { name: "Checkpoint / one", placements, unplaced: 2 });
+    assert.equal(version.file, "checkpoint-one.csv", "the file name was not made safe");
+    assert.equal(readVersions(scratch).length, 1, "the index did not gain the version");
+
+    const back = readVersion(scratch, version);
+    assert.equal(back.placements.length, 1, "the snapshot lost its row");
+    assert.equal(back.placements[0].section_id, "TEST-1");
+    assert.equal(back.placements[0].start, 420, "the snapshot lost its start time");
+
+    setCurrentVersion(scratch, version.file);
+    assert.equal(readVersions(scratch)[0].current, true, "the current flag was not set");
+
+    deleteVersion(scratch, version.file);
+    assert.equal(readVersions(scratch).length, 0, "the index kept a deleted version");
+    assert.equal(fs.existsSync(path.join(dir, "schedules", version.file)), false, "the file was left behind");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

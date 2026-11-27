@@ -114,16 +114,90 @@ function conflictsWith(candidate, placed, skipSectionId) {
   return count;
 }
 
-function greedy(sections, professors, candidatesBySection) {
-  const ordered = [...sections].sort(
-    (a, b) =>
-      b.capacity_needed - a.capacity_needed ||
-      b.duration_minutes - a.duration_minutes ||
-      a.section_id.localeCompare(b.section_id)
-  );
+/**
+ * Decide which locks can still be honoured.
+ *
+ * A lock records "this section stays in this room at this time". Data can change
+ * after it was set - a room deleted, a professor's availability narrowed - so
+ * every lock is re-checked here. Locks that no longer make sense are dropped
+ * (with a reason) rather than forcing an impossible schedule; the section is
+ * then solved normally.
+ */
+export function checkLocks({ locked = [], sections, rooms, grid, professors }) {
+  const bySection = new Map(sections.map((section) => [section.section_id, section]));
+  const byRoom = new Map(rooms.map((room) => [room.id, room]));
 
-  const placed = [];
+  const kept = [];
+  const dropped = [];
+
+  for (const lock of locked) {
+    const section = bySection.get(lock.section_id);
+    const room = byRoom.get(lock.room_id);
+    const start = Number(lock.start);
+    const end = start + (section?.duration_minutes ?? 0);
+
+    let reason = "";
+    if (!section) reason = "the section no longer exists";
+    else if (!room) reason = "the room no longer exists";
+    else if (room.capacity < section.capacity_needed) reason = "the room is now too small";
+    else if (!Number.isFinite(start) || start < 0) reason = "its time is missing";
+    else if (!grid.days.includes(lock.day)) reason = "its day is outside the grid";
+    else if (start < grid.start || end > grid.end) reason = "it is outside the teaching day";
+    else if ((start - grid.start) % grid.slot_minutes !== 0) reason = "it is not on a slot boundary";
+    else if (section.allowed_days.length > 0 && !section.allowed_days.includes(lock.day)) {
+      reason = "its day is no longer allowed";
+    } else {
+      const professor = section.instructor ? professors.get(section.instructor) : null;
+      if (
+        professor &&
+        professor.availability_start &&
+        professor.availability_end &&
+        (start < professor.availability_start || end > professor.availability_end)
+      ) {
+        reason = "it is outside the professor's availability";
+      }
+    }
+
+    if (!reason) {
+      const candidate = { section, room, day: lock.day, start, end };
+      const clash = kept.find((other) => conflictsPair(candidate, other));
+      if (clash) reason = `it clashes with the locked ${clash.section.section_id}`;
+    }
+
+    if (!reason && section.instructor) {
+      const professor = professors.get(section.instructor);
+      if (professor?.max_sections) {
+        const used = kept.filter((other) => other.section.instructor === section.instructor).length;
+        if (used >= professor.max_sections) {
+          reason = "it would exceed the professor's section limit";
+        }
+      }
+    }
+
+    if (reason) dropped.push({ ...lock, reason });
+    else kept.push({ section, room, day: lock.day, start, end });
+  }
+
+  return { kept, dropped };
+}
+
+function greedy(sections, professors, candidatesBySection, lockedPlacements, lockedIds) {
+  const placed = [...lockedPlacements];
   const perProfessor = new Map();
+
+  for (const placement of lockedPlacements) {
+    const name = placement.section.instructor;
+    if (name) perProfessor.set(name, (perProfessor.get(name) ?? 0) + 1);
+  }
+
+  const ordered = [...sections]
+    .filter((section) => !lockedIds.has(section.section_id))
+    .sort(
+      (a, b) =>
+        b.capacity_needed - a.capacity_needed ||
+        b.duration_minutes - a.duration_minutes ||
+        a.section_id.localeCompare(b.section_id)
+    );
 
   for (const section of ordered) {
     const professor = section.instructor ? professors.get(section.instructor) : null;
@@ -164,7 +238,7 @@ function greedy(sections, professors, candidatesBySection) {
  * Move one section at a time to whichever alternative slot reduces the number
  * of conflicting pairs. Stops when no move helps or the time budget runs out.
  */
-function localSearch(placed, candidatesBySection, deadline) {
+function localSearch(placed, candidatesBySection, deadline, lockedIds) {
   let currentViolations = violations(placed);
 
   for (let pass = 0; pass < MAX_PASSES; pass += 1) {
@@ -173,6 +247,7 @@ function localSearch(placed, candidatesBySection, deadline) {
     let best = null;
     for (const placement of placed) {
       const sectionId = placement.section.section_id;
+      if (lockedIds.has(sectionId)) continue;
       const others = placed.filter((item) => item.section.section_id !== sectionId);
       const base = violations(others);
 
@@ -200,21 +275,33 @@ function localSearch(placed, candidatesBySection, deadline) {
 
 /**
  * Solve the whole timetable.
+ * `locked` is a list of placements (from checkLocks) that must not move.
  * Returns only the placements; unplaced sections are explained separately by
  * explainUnplaced().
  */
-export function solve({ sections, rooms, grid, professors, budgetMs = 5000, restarts = 5 }) {
+export function solve({
+  sections,
+  rooms,
+  grid,
+  professors,
+  budgetMs = 5000,
+  restarts = 5,
+  locked = [],
+}) {
   const deadline = Date.now() + budgetMs;
+  const lockedIds = new Set(locked.map((placement) => placement.section.section_id));
   const candidatesBySection = new Map(
-    sections.map((section) => [section.section_id, candidatesFor(section, grid, rooms, professors)])
+    sections
+      .filter((section) => !lockedIds.has(section.section_id))
+      .map((section) => [section.section_id, candidatesFor(section, grid, rooms, professors)])
   );
 
-  let best = [];
-  let bestKey = null;
+  let best = [...locked];
+  let bestKey = [violations(locked), -locked.length];
 
   for (let run = 0; run < restarts; run += 1) {
-    const placed = greedy(sections, professors, candidatesBySection);
-    localSearch(placed, candidatesBySection, deadline);
+    const placed = greedy(sections, professors, candidatesBySection, locked, lockedIds);
+    localSearch(placed, candidatesBySection, deadline, lockedIds);
 
     const key = [violations(placed), -placed.length];
     const better =

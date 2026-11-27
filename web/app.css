@@ -340,6 +340,17 @@ a.banner-warn:hover {
   white-space: nowrap;
 }
 
+.inline-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.inline-form input[type="text"] {
+  max-width: 340px;
+}
+
 /* ----------------------------------------------------------------- tables */
 
 .table {

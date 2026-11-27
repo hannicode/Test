@@ -29,6 +29,8 @@ export const SCHEDULE_HEADERS = [
   "room_id", "room_name", "day", "start", "end",
 ];
 export const SETTINGS_HEADERS = ["school_name", "term_label", "term_start", "term_end"];
+export const LOCK_HEADERS = ["section_id", "room_id", "day", "start"];
+export const VERSION_HEADERS = ["name", "file", "created_at", "placed", "unplaced", "current"];
 
 /** Shown on the published timetable; blank values simply disappear from it. */
 export const DEFAULT_SETTINGS = {
@@ -124,6 +126,9 @@ export function loadData({ dataDir, outDir }) {
     drafts: path.join(dataDir, "drafts"),
     schedules: path.join(dataDir, "schedules"),
     imports: path.join(dataDir, "imports"),
+    draft: path.join(dataDir, "drafts", "current.csv"),
+    locks: path.join(dataDir, "drafts", "locks.csv"),
+    versions: path.join(dataDir, "schedules", "index.csv"),
     schedule: path.join(outDir, "schedule.csv"),
     export: path.join(outDir, "schedule.html"),
   };
@@ -231,12 +236,9 @@ export function sectionDays(section, grid) {
   return grid.days.filter((day) => section.allowed_days.includes(day));
 }
 
-/** Read the saved schedule.csv from `dir`, or null when nothing is saved. */
-export function readSavedSchedule(dir) {
-  const file = path.join(dir, "schedule.csv");
-  if (!fs.existsSync(file)) return null;
-
-  const placements = readCsvFile(file)
+/** Read a schedule-shaped CSV (one row per placed section). */
+function readPlacements(file) {
+  return readCsvFile(file)
     .map((row) => ({
       section_id: row.section_id,
       course_id: row.course_id,
@@ -249,8 +251,107 @@ export function readSavedSchedule(dir) {
       end: parseHhmm(row.end) ?? 0,
     }))
     .filter((placement) => placement.section_id !== "");
+}
 
-  return { placements, savedAt: fs.statSync(file).mtime };
+/** Read the published schedule.csv from `dir`, or null when nothing is published. */
+export function readSavedSchedule(dir) {
+  const file = path.join(dir, "schedule.csv");
+  if (!fs.existsSync(file)) return null;
+  return { placements: readPlacements(file), savedAt: fs.statSync(file).mtime };
+}
+
+/** The working schedule. Private until it is published. */
+export function readDraft(data) {
+  if (!fs.existsSync(data.paths.draft)) return null;
+  return {
+    placements: readPlacements(data.paths.draft),
+    savedAt: fs.statSync(data.paths.draft).mtime,
+  };
+}
+
+/** The sections the planner has pinned in place. */
+export function readLocks(data) {
+  return readCsvFile(data.paths.locks)
+    .map((row) => ({
+      section_id: String(row.section_id ?? "").trim(),
+      room_id: String(row.room_id ?? "").trim(),
+      day: String(row.day ?? "").trim(),
+      start: parseHhmm(row.start) ?? -1,
+    }))
+    .filter((lock) => lock.section_id !== "" && lock.room_id !== "");
+}
+
+/** Published versions, newest last, exactly one of them marked current. */
+export function readVersions(data) {
+  return readCsvFile(data.paths.versions).map((row) => ({
+    name: String(row.name ?? "").trim(),
+    file: String(row.file ?? "").trim(),
+    created_at: String(row.created_at ?? "").trim(),
+    placed: toInt(row.placed, 0),
+    unplaced: toInt(row.unplaced, 0),
+    current: String(row.current ?? "").trim() === "yes",
+  }));
+}
+
+/** One saved version by its index row, or null when the file is gone. */
+export function readVersion(data, version) {
+  const file = path.join(data.paths.schedules, path.basename(version.file));
+  if (!fs.existsSync(file)) return null;
+  return { placements: readPlacements(file), savedAt: fs.statSync(file).mtime };
+}
+
+/** Turn a display name into a file name that is safe on every OS. */
+function versionSlug(name) {
+  const slug = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  return slug || "version";
+}
+
+/** Save a named snapshot and add it to the index. */
+export function saveVersion(data, { name, placements, unplaced = 0 }) {
+  const versions = readVersions(data);
+  const base = versionSlug(name);
+  let file = `${base}.csv`;
+  let suffix = 2;
+  while (
+    versions.some((version) => version.file === file) ||
+    fs.existsSync(path.join(data.paths.schedules, file))
+  ) {
+    file = `${base}-${suffix}.csv`;
+    suffix += 1;
+  }
+
+  writePlacements(path.join(data.paths.schedules, file), placements);
+
+  const version = {
+    name,
+    file,
+    created_at: new Date().toISOString(),
+    placed: placements.length,
+    unplaced,
+    current: false,
+  };
+  saveVersions(data, [...versions, version]);
+  return version;
+}
+
+/** Remove a version and its file. */
+export function deleteVersion(data, file) {
+  const safe = path.basename(file);
+  const target = path.join(data.paths.schedules, safe);
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+  saveVersions(data, readVersions(data).filter((version) => version.file !== safe));
+}
+
+/** Mark exactly one version as the one currently published. */
+export function setCurrentVersion(data, file) {
+  saveVersions(
+    data,
+    readVersions(data).map((version) => ({ ...version, current: version.file === file }))
+  );
 }
 
 /** The newest modification time among the data files. */
@@ -361,21 +462,76 @@ export function saveSettings(data, settings) {
   );
 }
 
-/** Write schedule.csv from a list of placements. */
+/** Accept either a solver placement (nested) or an already-flat row. */
+function placementRows(placements) {
+  return placements.map((placement) => {
+    const flat = placement.section
+      ? {
+          section_id: placement.section.section_id,
+          course_id: placement.section.course_id,
+          course_name: placement.section.course_name,
+          instructor: placement.section.instructor,
+          room_id: placement.room.id,
+          room_name: placement.room.name,
+          day: placement.day,
+          start: placement.start,
+          end: placement.end,
+        }
+      : placement;
+
+    return {
+      section_id: flat.section_id,
+      course_id: flat.course_id,
+      course_name: flat.course_name,
+      instructor: flat.instructor,
+      room_id: flat.room_id,
+      room_name: flat.room_name,
+      day: flat.day,
+      start: formatHhmm(flat.start),
+      end: formatHhmm(flat.end),
+    };
+  });
+}
+
+/** Write a schedule-shaped CSV. */
+export function writePlacements(file, placements) {
+  writeCsvFile(file, SCHEDULE_HEADERS, placementRows(placements));
+}
+
+/** Write the published schedule.csv. */
 export function saveSchedule(data, placements) {
+  writePlacements(data.paths.schedule, placements);
+}
+
+/** Write the private working schedule. */
+export function saveDraft(data, placements) {
+  writePlacements(data.paths.draft, placements);
+}
+
+export function saveLocks(data, locks) {
   writeCsvFile(
-    data.paths.schedule,
-    SCHEDULE_HEADERS,
-    placements.map((placement) => ({
-      section_id: placement.section.section_id,
-      course_id: placement.section.course_id,
-      course_name: placement.section.course_name,
-      instructor: placement.section.instructor,
-      room_id: placement.room.id,
-      room_name: placement.room.name,
-      day: placement.day,
-      start: formatHhmm(placement.start),
-      end: formatHhmm(placement.end),
+    data.paths.locks,
+    LOCK_HEADERS,
+    locks.map((lock) => ({
+      section_id: lock.section_id,
+      room_id: lock.room_id,
+      day: lock.day,
+      start: formatHhmm(lock.start),
+    }))
+  );
+}
+
+export function saveVersions(data, versions) {
+  writeCsvFile(
+    data.paths.versions,
+    VERSION_HEADERS,
+    versions.map((version) => ({
+      name: version.name,
+      file: version.file,
+      created_at: version.created_at,
+      placed: version.placed,
+      unplaced: version.unplaced,
+      current: version.current ? "yes" : "no",
     }))
   );
 }

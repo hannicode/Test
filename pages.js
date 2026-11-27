@@ -25,11 +25,16 @@ const TIMETABLE_CSS = `
 .band-preferred { background: rgba(59, 130, 246, .13); border: 1px dashed rgba(37, 99, 235, .4); }
 .unit { position: relative; z-index: 2; min-width: 0; }
 .block { position: absolute; inset: 0; border-radius: 8px; border: 1px solid rgba(0, 0, 0, .06); box-shadow: 0 1px 3px rgba(16, 24, 40, .16), 0 1px 2px rgba(16, 24, 40, .08); display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; overflow: hidden; line-height: 1.25; }
-.block-course { font-size: 12px; font-weight: 800; }
-.block-meta { font-size: 10px; color: #3f3f46; }
+.block-course { display: block; font-size: 12px; font-weight: 800; }
+.block-meta { display: block; font-size: 10px; color: #3f3f46; }
 .block-short { justify-content: center; }
 .block-short .block-meta { display: none; }
 .block-warn { outline: 2px solid #f59e0b; outline-offset: -2px; }
+.lock-form { position: absolute; inset: 0; margin: 0; }
+.block-button { width: 100%; height: 100%; font: inherit; text-align: left; cursor: pointer; }
+.block-button:hover { filter: brightness(.95); }
+.block-locked { outline: 2px solid #18181b; outline-offset: -2px; }
+.block-locked::after { content: "LOCKED"; position: absolute; top: 4px; right: 5px; font-size: 8px; font-weight: 800; letter-spacing: .08em; color: #3f3f46; }
 .tip { display: none; position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 60; width: max-content; max-width: 280px; background: #18181b; color: #fff; border-radius: 8px; padding: 8px 10px; font-size: 11px; line-height: 1.35; white-space: pre-line; box-shadow: 0 10px 30px rgba(0, 0, 0, .3); font-weight: 500; }
 .unit:hover { z-index: 50; }
 .unit:hover .tip { display: block; }
@@ -200,8 +205,13 @@ function navChips(data) {
 }
 
 function shell(ctx, body) {
-  const { data, saved, active, title, msg, err, preview, exportExists } = ctx;
+  const { data, saved, draft, active, title, msg, err, preview, exportExists } = ctx;
   const chips = navChips(data);
+  const timetableChip = draft
+    ? `<span class="chip chip-warn">draft</span>`
+    : saved
+      ? `<span class="chip chip-ok">published</span>`
+      : `<span class="chip">none</span>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -235,7 +245,8 @@ function shell(ctx, body) {
       ${navItem("/generate", "Generate", "generate", active, chips.generate)}
 
       <div class="nav-step"><span class="step-num">3</span>Review</div>
-      ${navItem("/timetable", "Timetable", "timetable", active, saved ? `<span class="chip chip-ok">saved</span>` : `<span class="chip">none</span>`)}
+      ${navItem("/timetable", "Timetable", "timetable", active, timetableChip)}
+      ${navItem("/versions", "Versions", "versions", active, `<span class="chip">${ctx.versions?.length ?? 0}</span>`)}
       ${navItem("/schedules", "Professor schedules", "schedules", active, "")}
 
       <div class="nav-step"><span class="step-num">4</span>Export</div>
@@ -246,7 +257,11 @@ function shell(ctx, body) {
     </nav>
 
     <div class="sidebar-foot">
-      ${saved ? `Saved schedule<br><strong>${escapeHtml(dateLabel(saved.savedAt))}</strong>` : "No saved schedule yet"}
+      ${draft
+        ? `Draft saved<br><strong>${escapeHtml(dateLabel(draft.savedAt))}</strong>${saved ? `<br><span class="muted">published ${escapeHtml(dateLabel(saved.savedAt))}</span>` : ""}`
+        : saved
+          ? `Published schedule<br><strong>${escapeHtml(dateLabel(saved.savedAt))}</strong>`
+          : "No schedule yet"}
     </div>
   </aside>
 
@@ -309,23 +324,50 @@ export function timetableHtml(grid, placements, options = {}) {
     if (to <= from) continue;
 
     const short = placement.end - placement.start <= grid.slot_minutes;
-    const warn = options.warn?.(placement) ? " block-warn" : "";
+    const lock = options.lockable?.(placement) ?? null;
+    const classes = [
+      "block",
+      short ? "block-short" : "",
+      options.warn?.(placement) ? "block-warn" : "",
+      lock?.locked ? "block-locked" : "",
+      lock ? "block-button" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
     const tip = [
       `${placement.section_id} · ${placement.course_name}`,
       placement.instructor || "No instructor",
       placement.room_name || placement.room_id,
       `${placement.day} ${formatHhmm(placement.start)}–${formatHhmm(placement.end)}`,
-    ].join("\n");
+      lock ? (lock.locked ? "Locked — click to unlock" : "Click to lock this class") : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const content =
+      `<span class="block-course">${escapeHtml(placement.course_id)}</span>` +
+      (short
+        ? ""
+        : `<span class="block-meta">${formatHhmm(placement.start)}–${formatHhmm(placement.end)} · ${escapeHtml(placement.room_id)}</span>` +
+          `<span class="block-meta">${escapeHtml(placement.instructor || "—")}</span>`);
+
+    const background = colors.get(placement.course_id) ?? "#e4e4e7";
+
+    const inner = lock
+      ? `<form class="lock-form" method="post" action="/lock">
+          <input type="hidden" name="section_id" value="${escapeHtml(placement.section_id)}">
+          <input type="hidden" name="room_id" value="${escapeHtml(placement.room_id)}">
+          <input type="hidden" name="day" value="${escapeHtml(placement.day)}">
+          <input type="hidden" name="start" value="${placement.start}">
+          <input type="hidden" name="next" value="${escapeHtml(lock.next)}">
+          <button class="${classes}" style="background:${background};">${content}</button>
+        </form>`
+      : `<div class="${classes}" style="background:${background};">${content}</div>`;
 
     parts.push(
       `<div class="unit" style="grid-column:${column + 2}; grid-row:${from} / ${to};">` +
-        `<div class="block${short ? " block-short" : ""}${warn}" style="background:${colors.get(placement.course_id) ?? "#e4e4e7"};">` +
-          `<div class="block-course">${escapeHtml(placement.course_id)}</div>` +
-          (short
-            ? ""
-            : `<div class="block-meta">${formatHhmm(placement.start)}–${formatHhmm(placement.end)} · ${escapeHtml(placement.room_id)}</div>` +
-              `<div class="block-meta">${escapeHtml(placement.instructor || "—")}</div>`) +
-        `</div>` +
+        inner +
         `<span class="tip">${escapeHtml(tip)}</span>` +
       `</div>`
     );
@@ -335,7 +377,20 @@ export function timetableHtml(grid, placements, options = {}) {
   return parts.join("");
 }
 
-export function scheduleTable(placements) {
+function lockForm(row, options) {
+  const locked = options.locks?.some((lock) => lock.section_id === row.section_id);
+  const next = options.lockable(row).next;
+  return `<form method="post" action="/lock">
+    <input type="hidden" name="section_id" value="${escapeHtml(row.section_id)}">
+    <input type="hidden" name="room_id" value="${escapeHtml(row.room_id)}">
+    <input type="hidden" name="day" value="${escapeHtml(row.day)}">
+    <input type="hidden" name="start" value="${row.start}">
+    <input type="hidden" name="next" value="${escapeHtml(next)}">
+    <button class="btn btn-sm${locked ? " btn-primary" : ""}">${locked ? "Unlock" : "Lock"}</button>
+  </form>`;
+}
+
+export function scheduleTable(placements, options = {}) {
   const rows = placements.map(flat).sort(
     (a, b) =>
       DAYS.indexOf(a.day) - DAYS.indexOf(b.day) ||
@@ -344,9 +399,11 @@ export function scheduleTable(placements) {
   );
   if (rows.length === 0) return "";
 
+  const showLock = Boolean(options.lockable);
+
   return `<table class="table">
     <thead><tr>
-      <th>Section</th><th>Course</th><th>Instructor</th><th>Room</th><th>Day</th><th>Start</th><th>End</th>
+      <th>Section</th><th>Course</th><th>Instructor</th><th>Room</th><th>Day</th><th>Start</th><th>End</th>${showLock ? "<th></th>" : ""}
     </tr></thead>
     <tbody>
       ${rows
@@ -359,6 +416,7 @@ export function scheduleTable(placements) {
             <td>${escapeHtml(row.day)}</td>
             <td>${formatHhmm(row.start)}</td>
             <td>${formatHhmm(row.end)}</td>
+            ${showLock ? `<td class="row-actions">${lockForm(row, options)}</td>` : ""}
           </tr>`
         )
         .join("")}
@@ -391,32 +449,79 @@ function unplacedTable(unplaced) {
 // ---------------------------------------------------------------------------
 
 export function timetablePage(ctx) {
-  const { data, saved, stale } = ctx;
-  const actions = `
-    <form method="post" action="/generate"><button class="btn btn-primary">Generate schedule</button></form>
-    ${saved ? `<form method="post" action="/export"><button class="btn">Export schedule.html</button></form>` : ""}`;
+  const { data, saved, draft, stale, draftStale, draftDiffers, locks, lockCheck } = ctx;
+  const current = draft ?? saved;
+  const isDraft = Boolean(draft);
+  const placements = current ? current.placements.map(flat) : [];
+  const lockedIds = new Set((locks ?? []).map((lock) => lock.section_id));
+
+  const actions = [
+    `<form method="post" action="/generate"><button class="btn btn-primary">Generate schedule</button></form>`,
+    isDraft ? `<a class="btn" href="/publish">Publish draft</a>` : "",
+    current ? `<a class="btn" href="/versions">Versions</a>` : "",
+    saved ? `<form method="post" action="/export"><button class="btn">Export schedule.html</button></form>` : "",
+  ]
+    .filter(Boolean)
+    .join("");
 
   let body = pageHead(
-    "Class timetable",
-    saved ? "The saved schedule, by day and time." : "Nothing has been saved yet.",
+    isDraft ? "Draft timetable" : saved ? "Published timetable" : "Class timetable",
+    isDraft
+      ? "Your working copy. Click a class to lock it, then generate again around the locks."
+      : saved
+        ? "The published schedule, by day and time."
+        : "Nothing has been published yet.",
     actions
   );
 
-  if (stale) {
-    body += `<div class="banner banner-warn">Your data changed after this schedule was saved. Generate again to refresh it.</div>`;
-  }
-
-  if (!saved) {
+  if (!current) {
     body += emptyState(
-      "No schedule saved yet",
-      "Fill in rooms, professors, subjects and sections, then press Generate. Nothing is written to disk until you press Save on the preview.",
+      "No schedule yet",
+      "Fill in rooms, professors, subjects and sections, then press Generate. The result becomes a draft you can review before publishing.",
       "/sections",
       "Start with sections"
     );
     return shell({ ...ctx, title: "Timetable", active: "timetable" }, body);
   }
 
-  const placements = saved.placements.map(flat);
+  if (isDraft) {
+    body += `<div class="banner banner-warn"><strong>Draft — not published.</strong> ${
+      saved
+        ? draftDiffers
+          ? `The published timetable (${escapeHtml(dateLabel(saved.savedAt))}) is different. Publish when you are happy with this one.`
+          : "It matches the published timetable."
+        : "Nothing is published yet, so nobody else can see a timetable."
+    }</div>`;
+  }
+
+  if (isDraft ? draftStale : stale) {
+    body += `<div class="banner banner-warn">Your data changed after this schedule was saved. Generate again to refresh it.</div>`;
+  }
+
+  const unplaced = data.sections.filter(
+    (section) => !placements.some((placement) => placement.section_id === section.section_id)
+  );
+  if (unplaced.length > 0) {
+    body += `<div class="banner banner-warn">${unplaced.length} section(s) in your data are not in this ${
+      isDraft ? "draft" : "published schedule"
+    }. <a href="/generate">Generate</a> to try placing them.</div>`;
+  }
+
+  if (isDraft) {
+    body +=
+      locks.length > 0
+        ? `<div class="banner banner-ok"><strong>${locks.length} class(es) locked.</strong> They stay in place when you generate again.
+            <form method="post" action="/unlock-all" style="display:inline"><button class="btn btn-sm">Unlock all</button></form></div>`
+        : `<div class="banner">No classes locked. Click any class below or on the grid to pin it before regenerating.</div>`;
+
+    if (lockCheck?.dropped?.length > 0) {
+      body += messages(
+        [],
+        lockCheck.dropped.map((lock) => `${lock.section_id}: lock ignored — ${lock.reason}.`)
+      );
+    }
+  }
+
   const roomsUsed = new Set(placements.map((placement) => placement.room_id)).size;
   const teachers = new Set(placements.map((placement) => placement.instructor).filter(Boolean)).size;
 
@@ -424,17 +529,22 @@ export function timetablePage(ctx) {
     ${stat(placements.length, "sections placed")}
     ${stat(roomsUsed, "rooms used")}
     ${stat(teachers, "teachers")}
-    ${stat(dateLabel(saved.savedAt), "saved")}
+    ${stat(dateLabel(current.savedAt), isDraft ? "draft saved" : "published")}
   </div>`;
-  body += timetableHtml(data.grid, placements);
+
+  const lockable = isDraft
+    ? (placement) => ({ locked: lockedIds.has(placement.section_id), next: "/timetable" })
+    : null;
+
+  body += timetableHtml(data.grid, placements, lockable ? { lockable } : {});
   body += `<h2 class="section-title">All placed sections</h2>`;
-  body += scheduleTable(placements);
+  body += scheduleTable(placements, lockable ? { lockable, locks } : {});
 
   return shell({ ...ctx, title: "Timetable", active: "timetable" }, body);
 }
 
 export function generatePage(ctx) {
-  const { data, budgetMs } = ctx;
+  const { data, budgetMs, locks, lockCheck } = ctx;
   const warnings = [];
 
   if (data.sections.length === 0) warnings.push("There are no sections yet.");
@@ -461,6 +571,10 @@ export function generatePage(ctx) {
     warnings.push(`${noSubject.length} section(s) use a course with no subject file — no defaults are applied.`);
   }
 
+  for (const lock of lockCheck?.dropped ?? []) {
+    warnings.push(`Lock on ${lock.section_id} will be ignored — ${lock.reason}.`);
+  }
+
   let body = pageHead(
     "Generate schedule",
     `The solver runs right here and stops after about ${Math.round((budgetMs ?? 5000) / 1000)} seconds.`,
@@ -470,29 +584,52 @@ export function generatePage(ctx) {
     ${stat(data.sections.length, "sections")}
     ${stat(data.rooms.length, "rooms")}
     ${stat(data.professorList.length, "professors")}
-    ${stat(data.subjectList.length, "subjects")}
+    ${stat((locks ?? []).length, "locked")}
   </div>`;
   body += messages([], warnings);
   body += `<div class="panel">
     <h2>What happens when you press generate</h2>
     <ol class="steps-list">
       <li>The solver tries many placements and keeps the best one.</li>
+      <li>Classes you locked stay exactly where they are; everything else is rebuilt around them.</li>
       <li>You see a preview with any sections it could not place and the reason for each.</li>
-      <li>Nothing is written to disk until you press <strong>Save schedule</strong> on the preview.</li>
+      <li>Nothing is written to disk until you save the preview as a draft.</li>
     </ol>
     <form method="post" action="/generate"><button class="btn btn-primary btn-lg">Generate schedule</button></form>
   </div>`;
+
+  if ((locks ?? []).length > 0) {
+    body += `<div class="panel">
+      <h2>Locked classes</h2>
+      <table class="table">
+        <thead><tr><th>Section</th><th>Room</th><th>Day</th><th>Start</th></tr></thead>
+        <tbody>
+          ${locks
+            .map(
+              (lock) => `<tr>
+                <td>${escapeHtml(lock.section_id)}</td>
+                <td>${escapeHtml(lock.room_id)}</td>
+                <td>${escapeHtml(lock.day)}</td>
+                <td>${lock.start >= 0 ? formatHhmm(lock.start) : "—"}</td>
+              </tr>`
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>`;
+  }
 
   return shell({ ...ctx, title: "Generate", active: "generate" }, body);
 }
 
 export function previewPage(ctx) {
-  const { data, preview } = ctx;
+  const { data, preview, draft } = ctx;
   const placements = preview.placements.map(flat);
   const roomsUsed = new Set(placements.map((placement) => placement.room_id)).size;
+  const locked = preview.locks?.length ?? 0;
 
   const actions = `
-    <form method="post" action="/save"><button class="btn btn-primary">Save schedule</button></form>
+    <form method="post" action="/save"><button class="btn btn-primary">Save as draft</button></form>
     <form method="post" action="/discard"><button class="btn btn-ghost">Discard</button></form>`;
 
   let body = pageHead(
@@ -503,9 +640,22 @@ export function previewPage(ctx) {
   body += `<div class="stat-row">
     ${stat(placements.length, "placed")}
     ${stat(preview.unplaced.length, "unplaced")}
+    ${stat(locked, "locked")}
     ${stat(roomsUsed, "rooms used")}
   </div>`;
-  body += `<div class="banner banner-warn">This preview lives in the server's memory. Save it to write <code>schedule.csv</code>, or discard it to keep the previous schedule.</div>`;
+  body += `<div class="banner banner-warn">This preview lives in the server's memory. Save it as the draft to review and publish, or discard it to keep the current draft.</div>`;
+
+  if (draft) {
+    body += `<div class="banner banner-warn">Saving replaces the current draft (${escapeHtml(dateLabel(draft.savedAt))}). <a href="/versions">Save a version first</a> if you want a checkpoint.</div>`;
+  }
+
+  if (preview.droppedLocks?.length > 0) {
+    body += messages(
+      [],
+      preview.droppedLocks.map((lock) => `Lock on ${lock.section_id} was ignored — ${lock.reason}.`)
+    );
+  }
+
   body += timetableHtml(data.grid, placements);
 
   body += `<h2 class="section-title">Not placed${preview.unplaced.length ? ` (${preview.unplaced.length})` : ""}</h2>`;
@@ -520,7 +670,7 @@ export function previewPage(ctx) {
 }
 
 export function exportPage(ctx) {
-  const { data, saved, exportExists } = ctx;
+  const { saved, draft, draftDiffers, exportExists } = ctx;
   const actions = saved
     ? `<form method="post" action="/export"><button class="btn btn-primary">Write schedule.html</button></form>`
     : "";
@@ -534,20 +684,24 @@ export function exportPage(ctx) {
   body += `<div class="panel">
     <h2>What gets written</h2>
     <p><code>schedule.html</code> in the project folder. It has the styles inline, so it works without the server — double-click it, email it, or publish it with GitHub Pages.</p>
-    <p class="muted">It is generated from the <strong>saved</strong> schedule (<code>schedule.csv</code>), not from an unsaved preview.</p>
+    <p class="muted">It is generated from the <strong>published</strong> schedule (<code>schedule.csv</code>), not from a draft or an unsaved preview.</p>
   </div>`;
+
+  if (draft && draftDiffers) {
+    body += `<div class="banner banner-warn">You have a draft that is not published yet. <a href="/publish">Publish it</a> before exporting to include those changes.</div>`;
+  }
 
   if (!saved) {
     body += emptyState(
-      "No saved schedule to export",
-      "Generate a schedule and press Save first.",
+      "No published schedule to export",
+      "Generate a schedule, save it as a draft, then publish it first.",
       "/generate",
       "Go to Generate"
     );
   } else {
     body += `<div class="stat-row">
       ${stat(saved.placements.length, "sections")}
-      ${stat(dateLabel(saved.savedAt), "saved")}
+      ${stat(dateLabel(saved.savedAt), "published")}
     </div>`;
     body += `<div class="banner ${exportExists ? "banner-ok" : "banner-warn"}">
       ${exportExists ? "schedule.html exists. Writing again replaces it." : "schedule.html has not been written yet."}
@@ -555,6 +709,129 @@ export function exportPage(ctx) {
   }
 
   return shell({ ...ctx, title: "Export", active: "export" }, body);
+}
+
+// --- versions --------------------------------------------------------------
+
+export function versionsPage(ctx) {
+  const { data, draft, saved, versions } = ctx;
+  const source = draft ?? saved;
+  const sourceLabel = draft ? "draft" : "published schedule";
+
+  let body = pageHead(
+    "Versions",
+    "Named snapshots of the timetable. Restore one into the draft to keep working from it.",
+    `<a class="btn" href="/timetable">Back to timetable</a>`
+  );
+
+  body += `<div class="panel">
+    <h2>Save the current ${escapeHtml(sourceLabel)} as a version</h2>
+    ${
+      source
+        ? `<form method="post" action="/versions" class="inline-form">
+            <input type="text" name="name" placeholder="e.g. Before the room closure" aria-label="Version name">
+            <button class="btn btn-primary">Save version</button>
+          </form>
+          <p class="muted">Leave the name blank to use the term and the current date.</p>`
+        : `<p class="muted">Generate a schedule first.</p>`
+    }
+  </div>`;
+
+  if (versions.length === 0) {
+    body += emptyState(
+      "No versions yet",
+      "Publishing creates one automatically. You can also save a version whenever you want a checkpoint.",
+      source ? "/timetable" : "/generate",
+      source ? "Back to timetable" : "Go to Generate"
+    );
+    return shell({ ...ctx, title: "Versions", active: "versions" }, body);
+  }
+
+  body += `<table class="table">
+    <thead><tr><th>Name</th><th>Created</th><th>Placed</th><th>Unplaced</th><th></th></tr></thead>
+    <tbody>
+      ${[...versions]
+        .reverse()
+        .map(
+          (version) => `<tr>
+            <td>${escapeHtml(version.name)}${version.current ? ` <span class="chip chip-ok">published</span>` : ""}</td>
+            <td>${escapeHtml(formatWhen(version.created_at))}</td>
+            <td>${version.placed}</td>
+            <td>${version.unplaced}</td>
+            <td class="row-actions">
+              <a class="btn btn-sm" href="/versions/restore/${encodeURIComponent(version.file)}">Restore</a>
+              <a class="btn btn-sm btn-danger" href="/versions/delete/${encodeURIComponent(version.file)}">Delete</a>
+            </td>
+          </tr>`
+        )
+        .join("")}
+    </tbody>
+  </table>`;
+
+  return shell({ ...ctx, title: "Versions", active: "versions" }, body);
+}
+
+export function versionRestorePage(ctx) {
+  const { version, versionPlacements } = ctx;
+  const detail = `<p><strong>${escapeHtml(version.name)}</strong> — ${versionPlacements.length} placed section(s), saved ${escapeHtml(formatWhen(version.created_at))}.</p>
+    <p>Restoring replaces the current draft with this snapshot and clears all locks. The published timetable is not touched.</p>`;
+  return confirmPage(ctx, {
+    title: "Restore version",
+    subtitle: "This becomes your working draft.",
+    detail,
+    action: "/versions/restore",
+    cancelHref: "/versions",
+    file: version.file,
+    label: "Restore",
+    buttonClass: "btn-primary",
+  });
+}
+
+export function versionDeletePage(ctx) {
+  const { version } = ctx;
+  const detail = `<p>Delete <strong>${escapeHtml(version.name)}</strong>, saved ${escapeHtml(formatWhen(version.created_at))}?</p>
+    <p>The snapshot file is removed. The draft and the published timetable are not touched.</p>`;
+  return confirmPage(ctx, {
+    title: "Delete version",
+    subtitle: "This cannot be undone.",
+    detail,
+    action: "/versions/delete",
+    cancelHref: "/versions",
+    file: version.file,
+  });
+}
+
+export function publishPage(ctx) {
+  const { data, draft, saved, draftDiffers } = ctx;
+  const placedIds = new Set(draft.placements.map((placement) => placement.section_id));
+  const unplaced = data.sections.filter((section) => !placedIds.has(section.section_id));
+
+  const detail = `<p>Publish <strong>${draft.placements.length}</strong> section(s) from the draft${
+    data.settings.term_label ? ` for <strong>${escapeHtml(data.settings.term_label)}</strong>` : ""
+  }.</p>
+  <p>This replaces <code>schedule.csv</code> and saves a named snapshot you can restore later.${
+    unplaced.length > 0
+      ? ` <strong>${unplaced.length} section(s) are not in the draft</strong> and will not appear in the published timetable.`
+      : ""
+  }</p>
+  ${
+    saved
+      ? `<p class="muted">The current published timetable is from ${escapeHtml(dateLabel(saved.savedAt))}${
+          draftDiffers ? " and is different from this draft." : " and already matches this draft."
+        }</p>`
+      : `<p class="muted">Nothing is published yet.</p>`
+  }
+  <p class="muted">After publishing, use Export to write <code>schedule.html</code>.</p>`;
+
+  return confirmPage(ctx, {
+    title: "Publish draft",
+    subtitle: "Make this timetable the published one.",
+    detail,
+    action: "/publish",
+    cancelHref: "/timetable",
+    label: "Publish",
+    buttonClass: "btn-primary",
+  });
 }
 
 // --- sections --------------------------------------------------------------
@@ -1225,14 +1502,18 @@ export function helpPage(ctx) {
     <div class="panel">
       <h2>2 · Generate</h2>
       <p>The solver places sections respecting room capacity, room clashes, instructor clashes, course clashes, professor availability and each professor's section limit. Preferred hours are soft: they are preferred, not required.</p>
+      <p>Generate shows a preview in memory. <strong>Save as draft</strong> writes it to <code>data/drafts/current.csv</code> — private until you publish.</p>
     </div>
     <div class="panel">
       <h2>3 · Review</h2>
-      <p>The preview shows what was placed and why anything was left out. Open a professor's schedule to see their availability and preferred windows shaded, with classes outside them flagged.</p>
+      <p>The draft timetable is your working copy. Click any class on the grid or in the table to <strong>lock</strong> it. Generate again and locked classes stay put while everything else is rebuilt around them. Lock a class again to unlock it.</p>
+      <p><a href="/versions">Versions</a> are named snapshots. Publishing creates one automatically; you can also save one at any time and restore it into the draft later.</p>
+      <p>Open a professor's schedule to see their availability and preferred windows shaded, with classes outside them flagged.</p>
     </div>
     <div class="panel">
-      <h2>4 · Export</h2>
-      <p>Write <code>schedule.html</code>: one self-contained file you can double-click or share. It is built from the saved schedule, not from an unsaved preview.</p>
+      <h2>4 · Publish and export</h2>
+      <p><strong>Publish draft</strong> writes the published timetable to <code>schedule.csv</code> and saves a snapshot. This is what readers see; the draft stays private.</p>
+      <p><strong>Export</strong> writes <code>schedule.html</code>: one self-contained file you can double-click or share. It is built from the published schedule, not from a draft or an unsaved preview.</p>
     </div>
     <div class="panel">
       <h2>Backups</h2>
@@ -1250,7 +1531,10 @@ export function helpPage(ctx) {
           <tr><td><code>data/professors/*.csv</code></td><td>One file per professor: windows and limits</td></tr>
           <tr><td><code>data/subjects/*.csv</code></td><td>One file per subject: duration and capacity defaults</td></tr>
           <tr><td><code>data/settings.csv</code></td><td>School name and term shown on the published page</td></tr>
-          <tr><td><code>schedule.csv</code></td><td>The saved schedule</td></tr>
+          <tr><td><code>data/drafts/current.csv</code></td><td>Your working draft — private, never published by accident</td></tr>
+          <tr><td><code>data/drafts/locks.csv</code></td><td>Classes pinned in place for the next generate</td></tr>
+          <tr><td><code>data/schedules/</code></td><td>Named snapshots and their index</td></tr>
+          <tr><td><code>schedule.csv</code></td><td>The published schedule</td></tr>
           <tr><td><code>schedule.html</code></td><td>The exported, shareable timetable</td></tr>
         </tbody>
       </table>
@@ -1267,10 +1551,26 @@ export function helpPage(ctx) {
   return shell({ ...ctx, title: "How to use this", active: "help" }, body);
 }
 
-export function confirmPage(ctx, { title, subtitle, detail, action, cancelHref }) {
+export function confirmPage(ctx, {
+  title,
+  subtitle,
+  detail,
+  action,
+  cancelHref,
+  file,
+  label = "Delete",
+  buttonClass = "btn-danger",
+}) {
   const body = pageHead(title, subtitle, "") + `<div class="panel">${detail}</div>
     <div class="actions">
-      ${action ? `<form method="post" action="${action}"><button class="btn btn-danger">Delete</button></form>` : ""}
+      ${
+        action
+          ? `<form method="post" action="${action}">
+              ${file ? `<input type="hidden" name="file" value="${escapeHtml(file)}">` : ""}
+              <button class="btn ${buttonClass}">${escapeHtml(label)}</button>
+            </form>`
+          : ""
+      }
       <a class="btn btn-ghost" href="${cancelHref}">${action ? "Cancel" : "Back"}</a>
     </div>`;
   return shell({ ...ctx, title, active: ctx.active }, body);

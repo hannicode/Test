@@ -37,13 +37,45 @@ The sidebar is the flow, in four numbered steps:
 1. **Data** — add sections, professors, subjects, and rooms. Type them in, or
    import a CSV from a spreadsheet. Set the teaching grid (days and hours).
 2. **Generate** — the solver runs in the server and takes up to ~5 seconds.
-3. **Review** — inspect the result. The preview shows what could not be placed
-   and why. Open any professor to see their personal schedule.
-4. **Export** — write `schedule.html`, a single self-contained file you can
-   double-click, email, or publish.
+   Locked classes stay put; everything else is placed around them.
+3. **Review** — save the result as a **draft**, inspect it, click classes to
+   lock them, and regenerate. Named **versions** are checkpoints you can
+   restore.
+4. **Publish and export** — publish the draft to `schedule.csv`, then write
+   `schedule.html`, a single self-contained file you can double-click, email,
+   or publish.
 
-Nothing is written to `schedule.csv` until you press **Save schedule** on the
-preview. A bad run can never destroy a good schedule.
+A generated preview lives only in the server's memory. Press **Save as draft**
+to write it to `data/drafts/current.csv`; nothing becomes visible to readers
+until you press **Publish**. A bad run can never destroy a good timetable.
+
+---
+
+## Draft, publish, versions
+
+The app keeps three states:
+
+| State | Where it lives | Who sees it |
+| --- | --- | --- |
+| **Preview** | server memory | you, until you save or discard |
+| **Draft** | `data/drafts/current.csv` | only you — the working copy |
+| **Published** | `schedule.csv` | readers; this is the real timetable |
+
+**Publishing** copies the draft to `schedule.csv` and saves a named snapshot.
+It asks for confirmation first and tells you how many sections are in the draft
+and how many are missing.
+
+**Locking.** On the draft timetable, click a class (on the grid or in the table)
+to pin it. Generate again: locked classes stay exactly where they are, and the
+solver rebuilds everything else around them. Click again to unlock. Locks are
+re-checked every time — if a room is deleted or a professor's availability
+changes, a lock that no longer fits is dropped with the reason shown, rather
+than forcing an impossible schedule.
+
+**Versions** are named snapshots under `data/schedules/`. Publishing creates one
+automatically. You can also save one at any time from the Versions page, and
+restore it into the draft later. Restoring clears locks; the published
+timetable is not touched until you publish again.
 
 ---
 
@@ -88,7 +120,9 @@ every remaining slot clashing with something else).
 | `test.js` | The checks behind `npm test` |
 | `web/app.css` | Styling for the app shell |
 | `data/` | Your data — this is the source of truth |
-| `schedule.csv` | The saved schedule |
+| `data/drafts/` | Private working draft and locks (not committed) |
+| `data/schedules/` | Named snapshots and their index |
+| `schedule.csv` | The published schedule |
 | `schedule.html` | The exported, shareable timetable |
 
 The app writes each CSV safely: a temporary file is written first, the previous
@@ -140,8 +174,8 @@ as a whole, with the line number. Nothing is ever half-written.
 ## Backups
 
 **Import & backup → Backups.** *Download backup* writes one JSON file holding
-every CSV in `data/` (sections, rooms, grid, settings, and one entry per
-professor and subject).
+every CSV in `data/` (sections, rooms, grid, settings, one entry per professor
+and subject, plus the draft and any saved versions).
 
 Restoring is also two steps: choose the file, see which files would be changed,
 added or removed, then confirm. A restore deletes data files that are not in the
@@ -158,12 +192,13 @@ The zero-tech option still works: copy the whole `data` folder somewhere safe.
 npm test
 ```
 
-Sixteen checks, no framework: the data folder is complete, every section points
+Eighteen checks, no framework: the data folder is complete, every section points
 at a real professor and subject, the solver places all 60 sections without
-breaking a hard constraint, the forms refuse broken input, CSV survives commas
-and quotes, an import changes nothing until it is applied, a backup restores
-exactly what it captured, and every page answers. It never saves anything, so it
-is safe to run at any time.
+breaking a hard constraint, a locked section stays pinned, the forms refuse
+broken input, CSV survives commas and quotes, an import changes nothing until
+it is applied, a backup restores exactly what it captured, a version round-trips
+through its index, and every page answers. It never saves anything, so it is
+safe to run at any time.
 
 ---
 
@@ -299,6 +334,9 @@ reason for each one.
 ---
 
 ## Publishing the timetable
+
+In the app, **Publish draft** makes the draft the real timetable (`schedule.csv`)
+and saves a snapshot. **Export** then writes `schedule.html`.
 
 `schedule.html` is fully self-contained (styles inline, no scripts). To put it
 online with GitHub Pages, commit it and enable Pages for your repository

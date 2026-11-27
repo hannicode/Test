@@ -18,6 +18,10 @@ import {
   loadData,
   applySubjectDefaults,
   readSavedSchedule,
+  readDraft,
+  readLocks,
+  readVersions,
+  readVersion,
   isStale,
   saveSections,
   saveRooms,
@@ -25,11 +29,16 @@ import {
   saveProfessorFile,
   saveSubjectFile,
   saveSchedule,
+  saveDraft,
+  saveLocks,
+  saveVersion,
+  deleteVersion,
+  setCurrentVersion,
   toInt,
   parseHhmm,
   formatHhmm,
 } from "./data.js";
-import { solve, explainUnplaced, placementPenalty } from "./solver.js";
+import { solve, explainUnplaced, placementPenalty, checkLocks } from "./solver.js";
 import {
   validateSection,
   validateProfessor,
@@ -145,15 +154,49 @@ function readBody(req) {
 function baseContext(extra = {}) {
   const data = load();
   const saved = readSavedSchedule(OUT_DIR);
+  const draft = readDraft(data);
+  const locks = readLocks(data);
+  const versions = readVersions(data);
+
+  // Re-check the pins against today's data so pages can warn before a solve.
+  const sections = applySubjectDefaults(data.sections, data.subjects);
+  const lockCheck = checkLocks({
+    locked: locks,
+    sections,
+    rooms: data.rooms,
+    grid: data.grid,
+    professors: data.professors,
+  });
+
   return {
     data,
     saved,
+    draft,
+    locks,
+    versions,
+    lockCheck,
     preview,
     stale: isStale(data, saved),
+    draftStale: isStale(data, draft),
+    draftDiffers: Boolean(draft && saved && !samePlacements(draft.placements, saved.placements)),
     exportExists: fs.existsSync(data.paths.export),
     budgetMs: BUDGET_MS,
     ...extra,
   };
+}
+
+/** Do two lists of saved rows describe the same timetable? */
+function samePlacements(a, b) {
+  if (a.length !== b.length) return false;
+  const key = (row) => `${row.section_id}|${row.room_id}|${row.day}|${row.start}`;
+  const seen = new Set(a.map(key));
+  return b.every((row) => seen.has(key(row)));
+}
+
+/** Only follow redirects that stay inside this app. */
+function safeNext(value) {
+  const text = String(value ?? "");
+  return text.startsWith("/") && !text.startsWith("//") ? text : "/timetable";
 }
 
 function flash(path, message, warnings = []) {
@@ -278,12 +321,22 @@ route("GET", "/generate", ({ query }) => ({
 route("POST", "/generate", () => {
   const data = load();
   const sections = applySubjectDefaults(data.sections, data.subjects);
+  const locks = readLocks(data);
+  const { kept, dropped } = checkLocks({
+    locked: locks,
+    sections,
+    rooms: data.rooms,
+    grid: data.grid,
+    professors: data.professors,
+  });
+
   const placements = solve({
     sections,
     rooms: data.rooms,
     grid: data.grid,
     professors: data.professors,
     budgetMs: BUDGET_MS,
+    locked: kept,
   });
 
   const placedIds = new Set(placements.map((placement) => placement.section.section_id));
@@ -299,7 +352,7 @@ route("POST", "/generate", () => {
       }),
     }));
 
-  preview = { placements, unplaced, createdAt: new Date() };
+  preview = { placements, unplaced, createdAt: new Date(), locks: kept, droppedLocks: dropped };
   return { redirect: "/preview" };
 });
 
@@ -313,16 +366,177 @@ route("GET", "/preview", () => {
 route("POST", "/save", () => {
   if (!preview) return { redirect: `/timetable?err=${encodeURIComponent("There is nothing to save.")}` };
   const data = load();
-  saveSchedule(data, preview.placements);
+  saveDraft(data, preview.placements);
+  saveLocks(data, preview.locks ?? []);
   const placed = preview.placements.length;
   const unplaced = preview.unplaced.length;
+  const dropped = preview.droppedLocks?.length ?? 0;
   preview = null;
-  return flash("/timetable", `Schedule saved — ${placed} placed, ${unplaced} unplaced.`);
+  return flash(
+    "/timetable",
+    `Draft saved — ${placed} placed, ${unplaced} unplaced.`,
+    dropped ? [`${dropped} lock(s) no longer fit and were removed.`] : []
+  );
 });
 
 route("POST", "/discard", () => {
   preview = null;
-  return flash("/timetable", "Preview discarded. The previous saved schedule is unchanged.");
+  return flash("/timetable", "Preview discarded. The draft is unchanged.");
+});
+
+// --- draft, locks and published versions -----------------------------------
+
+route("POST", "/lock", async ({ req }) => {
+  const form = await readBody(req);
+  const next = safeNext(form.get("next"));
+  const data = load();
+  const draft = readDraft(data);
+  if (!draft) {
+    return { redirect: `/timetable?err=${encodeURIComponent("Save a draft before locking classes.")}` };
+  }
+
+  const sectionId = (form.get("section_id") ?? "").trim();
+  const row = draft.placements.find((placement) => placement.section_id === sectionId);
+  if (!row) {
+    return { redirect: `/timetable?err=${encodeURIComponent("That class is not in the draft any more.")}` };
+  }
+
+  const locks = readLocks(data);
+  const existing = locks.find((lock) => lock.section_id === sectionId);
+  if (existing) {
+    saveLocks(data, locks.filter((lock) => lock.section_id !== sectionId));
+    return flash(next, `Unlocked ${sectionId}.`);
+  }
+
+  saveLocks(data, [
+    ...locks,
+    { section_id: row.section_id, room_id: row.room_id, day: row.day, start: row.start },
+  ]);
+  return flash(next, `Locked ${sectionId} at ${row.day} ${formatHhmm(row.start)}. Generate again to keep it there.`);
+});
+
+route("POST", "/unlock-all", () => {
+  const data = load();
+  const count = readLocks(data).length;
+  saveLocks(data, []);
+  return flash("/timetable", `Cleared ${count} lock(s).`);
+});
+
+route("GET", "/versions", ({ query }) => ({
+  html: pages.versionsPage(baseContext({
+    title: "Versions",
+    active: "timetable",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  })),
+}));
+
+route("POST", "/versions", async ({ req }) => {
+  const form = await readBody(req);
+  const data = load();
+  const source = readDraft(data) ?? readSavedSchedule(OUT_DIR);
+  if (!source) {
+    return { redirect: `/versions?err=${encodeURIComponent("Generate and save a draft first.")}` };
+  }
+
+  const placedIds = new Set(source.placements.map((placement) => placement.section_id));
+  const unplaced = data.sections.filter((section) => !placedIds.has(section.section_id)).length;
+  const typed = (form.get("name") ?? "").trim();
+  const name = typed || `${data.settings.term_label || "Schedule"} — ${new Date().toLocaleString()}`;
+
+  const version = saveVersion(data, { name, placements: source.placements, unplaced });
+  return flash("/versions", `Saved version “${version.name}”.`);
+});
+
+route("GET", "/versions/restore/:file", ({ params }) => {
+  const data = load();
+  const version = readVersions(data).find((item) => item.file === params.file);
+  const contents = version ? readVersion(data, version) : null;
+  if (!version || !contents) {
+    return { redirect: `/versions?err=${encodeURIComponent("That version no longer exists.")}` };
+  }
+
+  return {
+    html: pages.versionRestorePage(baseContext({
+      title: "Restore version",
+      active: "timetable",
+      version,
+      versionPlacements: contents.placements,
+    })),
+  };
+});
+
+route("POST", "/versions/restore", async ({ req }) => {
+  const form = await readBody(req);
+  const file = (form.get("file") ?? "").trim();
+  const data = load();
+  const version = readVersions(data).find((item) => item.file === file);
+  const contents = version ? readVersion(data, version) : null;
+  if (!version || !contents) {
+    return { redirect: `/versions?err=${encodeURIComponent("That version no longer exists.")}` };
+  }
+
+  saveDraft(data, contents.placements);
+  saveLocks(data, []);
+  return flash("/timetable", `Restored “${version.name}” as the draft. Locks were cleared.`);
+});
+
+route("GET", "/versions/delete/:file", ({ params }) => {
+  const data = load();
+  const version = readVersions(data).find((item) => item.file === params.file);
+  if (!version) {
+    return { redirect: `/versions?err=${encodeURIComponent("That version no longer exists.")}` };
+  }
+
+  return {
+    html: pages.versionDeletePage(baseContext({
+      title: "Delete version",
+      active: "timetable",
+      version,
+    })),
+  };
+});
+
+route("POST", "/versions/delete", async ({ req }) => {
+  const form = await readBody(req);
+  const file = (form.get("file") ?? "").trim();
+  const data = load();
+  const version = readVersions(data).find((item) => item.file === file);
+  if (!version) {
+    return { redirect: `/versions?err=${encodeURIComponent("That version no longer exists.")}` };
+  }
+
+  deleteVersion(data, file);
+  return flash("/versions", `Deleted “${version.name}”.`);
+});
+
+route("GET", "/publish", () => {
+  const ctx = baseContext({ title: "Publish", active: "timetable" });
+  if (!ctx.draft) {
+    return { redirect: `/timetable?err=${encodeURIComponent("There is no draft to publish.")}` };
+  }
+  return { html: pages.publishPage(ctx) };
+});
+
+route("POST", "/publish", () => {
+  const data = load();
+  const draft = readDraft(data);
+  if (!draft) {
+    return { redirect: `/timetable?err=${encodeURIComponent("There is no draft to publish.")}` };
+  }
+
+  saveSchedule(data, draft.placements);
+
+  const placedIds = new Set(draft.placements.map((placement) => placement.section_id));
+  const unplaced = data.sections.filter((section) => !placedIds.has(section.section_id)).length;
+  const name = `Published ${data.settings.term_label || "schedule"} — ${new Date().toLocaleString()}`;
+  const version = saveVersion(data, { name, placements: draft.placements, unplaced });
+  setCurrentVersion(data, version.file);
+
+  return flash(
+    "/timetable",
+    `Published ${draft.placements.length} sections. Snapshot “${version.name}” saved.`
+  );
 });
 
 route("GET", "/export", ({ query }) => ({
