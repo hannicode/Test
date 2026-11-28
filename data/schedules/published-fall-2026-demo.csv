@@ -1,0 +1,61 @@
+section_id,course_id,course_name,instructor,room_id,room_name,day,start,end
+MATH101-L1,MATH101,Calculus I,Prof. Anil Kapoor,R202,Classroom 202,Mon,09:00,10:30
+MATH101-L2,MATH101,Calculus I,Prof. Grace Mwangi,R202,Classroom 202,Tue,09:00,10:30
+MATH101-L3,MATH101,Calculus I,Prof. Anil Kapoor,R202,Classroom 202,Mon,10:30,12:00
+MATH101-L4,MATH101,Calculus I,Prof. Yuki Tanaka,R202,Classroom 202,Tue,10:30,12:00
+MATH101-L6,MATH101,Calculus I,Prof. Yuki Tanaka,R202,Classroom 202,Mon,12:00,13:30
+CS101-L1,CS101,Introduction to Programming,Dr. Amara Okafor,R103,Lecture Hall A,Mon,09:00,11:00
+CS101-L2,CS101,Introduction to Programming,Dr. Ines Laurent,R103,Lecture Hall A,Tue,09:00,11:00
+CS101-L3,CS101,Introduction to Programming,Dr. Amara Okafor,R103,Lecture Hall A,Mon,11:00,13:00
+CS101-L4,CS101,Introduction to Programming,Dr. Wei Zhang,R103,Lecture Hall A,Tue,11:00,13:00
+CS101-L6,CS101,Introduction to Programming,Dr. Wei Zhang,R103,Lecture Hall A,Mon,13:00,15:00
+MATH201-L1,MATH201,Linear Algebra,Prof. Sofia Alvarez,R103,Lecture Hall A,Wed,08:00,09:30
+MATH201-L2,MATH201,Linear Algebra,Prof. Peter Novak,R103,Lecture Hall A,Tue,13:00,14:30
+MATH201-L3,MATH201,Linear Algebra,Prof. Sofia Alvarez,R103,Lecture Hall A,Fri,08:00,09:30
+MATH201-L4,MATH201,Linear Algebra,Prof. Leila Rahimi,R103,Lecture Hall A,Tue,14:30,16:00
+MATH201-L6,MATH201,Linear Algebra,Prof. Leila Rahimi,R103,Lecture Hall A,Mon,15:00,16:30
+MATH202-L1,MATH202,Probability and Statistics,Prof. Ahmed Bello,R103,Lecture Hall A,Wed,09:30,11:00
+MATH202-L2,MATH202,Probability and Statistics,Prof. Anil Kapoor,R103,Lecture Hall A,Thu,09:00,10:30
+MATH202-L3,MATH202,Probability and Statistics,Prof. Ahmed Bello,R103,Lecture Hall A,Wed,11:00,12:30
+MATH202-L4,MATH202,Probability and Statistics,Prof. Grace Mwangi,R103,Lecture Hall A,Thu,10:30,12:00
+MATH202-L6,MATH202,Probability and Statistics,Prof. Sofia Alvarez,R104,Lecture Hall B,Mon,08:00,09:30
+CS102-L1,CS102,Discrete Mathematics,Dr. Tomas Ferreira,R201,Classroom 201,Mon,07:00,08:30
+CS102-L2,CS102,Discrete Mathematics,Dr. Priya Raman,R201,Classroom 201,Tue,08:00,09:30
+CS102-L3,CS102,Discrete Mathematics,Dr. Tomas Ferreira,R201,Classroom 201,Mon,08:30,10:00
+CS102-L4,CS102,Discrete Mathematics,Dr. Jonas Berg,R201,Classroom 201,Tue,13:00,14:30
+CS310-L1,CS310,Web Development,Dr. Omar Saleh,R201,Classroom 201,Mon,10:00,11:30
+CS310-L2,CS310,Web Development,Dr. Clara Bianchi,R201,Classroom 201,Tue,14:30,16:00
+CS310-L3,CS310,Web Development,Dr. Omar Saleh,R201,Classroom 201,Fri,08:00,09:30
+CS310-L4,CS310,Web Development,Dr. Ines Laurent,R201,Classroom 201,Tue,11:00,12:30
+MATH101-L5,MATH101,Calculus I,Prof. Grace Mwangi,R201,Classroom 201,Thu,09:00,10:30
+CS101-L5,CS101,Introduction to Programming,Dr. Ines Laurent,R301,Classroom 301,Tue,13:00,15:00
+CS201-L1,CS201,Data Structures,Dr. Fatima Al-Sayed,L202,Computer Lab 2,Mon,09:00,11:00
+CS201-L2,CS201,Data Structures,Dr. Michael Chen,L202,Computer Lab 2,Tue,09:00,11:00
+CS201-L3,CS201,Data Structures,Dr. Fatima Al-Sayed,L202,Computer Lab 2,Mon,11:00,13:00
+CS201-L4,CS201,Data Structures,Dr. Sara Haddad,L202,Computer Lab 2,Tue,11:00,13:00
+CS202-L1,CS202,Computer Architecture,Dr. Daniel Osei,L202,Computer Lab 2,Mon,07:00,08:30
+CS202-L2,CS202,Computer Architecture,Dr. Elena Petrova,R301,Classroom 301,Tue,08:00,09:30
+CS202-L3,CS202,Computer Architecture,Dr. Daniel Osei,R301,Classroom 301,Mon,08:30,10:00
+CS202-L4,CS202,Computer Architecture,Dr. Kenji Watanabe,L202,Computer Lab 2,Tue,13:00,14:30
+CS301-L1,CS301,Databases,Dr. Lucas Moreau,R301,Classroom 301,Mon,10:00,11:30
+CS301-L2,CS301,Databases,Dr. Nadia Farouk,R301,Classroom 301,Tue,09:30,11:00
+CS301-L3,CS301,Databases,Dr. Lucas Moreau,R301,Classroom 301,Mon,11:30,13:00
+CS301-L4,CS301,Databases,Dr. Nadia Farouk,R301,Classroom 301,Tue,11:00,12:30
+CS402-L1,CS402,Software Engineering,Dr. Sara Haddad,L202,Computer Lab 2,Mon,13:00,14:30
+CS402-L2,CS402,Software Engineering,Dr. Nadia Farouk,L202,Computer Lab 2,Thu,09:00,10:30
+CS402-L3,CS402,Software Engineering,Dr. Sara Haddad,L202,Computer Lab 2,Mon,14:30,16:00
+CS402-L4,CS402,Software Engineering,Dr. Clara Bianchi,L202,Computer Lab 2,Tue,16:00,17:30
+MATH201-L5,MATH201,Linear Algebra,Prof. Peter Novak,R301,Classroom 301,Wed,13:00,14:30
+MATH202-L5,MATH202,Probability and Statistics,Prof. Yuki Tanaka,R301,Classroom 301,Mon,13:30,15:00
+CS302-L1,CS302,Operating Systems,Dr. Ravi Menon,R102,Seminar Room 2,Mon,10:00,12:00
+CS302-L2,CS302,Operating Systems,Dr. Hannah Weiss,R102,Seminar Room 2,Tue,07:00,09:00
+CS302-L3,CS302,Operating Systems,Dr. Ravi Menon,R102,Seminar Room 2,Mon,12:00,14:00
+CS302-L4,CS302,Operating Systems,Dr. Hannah Weiss,L201,Computer Lab 1,Tue,09:00,11:00
+CS401-L1,CS401,Machine Learning,Dr. Wei Zhang,L201,Computer Lab 1,Mon,10:00,12:00
+CS401-L2,CS401,Machine Learning,Dr. Michael Chen,R102,Seminar Room 2,Tue,11:00,13:00
+CS401-L3,CS401,Machine Learning,Dr. Wei Zhang,L201,Computer Lab 1,Mon,15:00,17:00
+CS401-L4,CS401,Machine Learning,Dr. Kenji Watanabe,R102,Seminar Room 2,Tue,14:30,16:30
+CS102-L5,CS102,Discrete Mathematics,Dr. Priya Raman,R102,Seminar Room 2,Fri,08:00,09:30
+CS310-L5,CS310,Web Development,Dr. Clara Bianchi,R102,Seminar Room 2,Wed,13:00,14:30
+CS201-L5,CS201,Data Structures,Dr. Michael Chen,R101,Seminar Room 1,Tue,13:00,15:00
+CS202-L5,CS202,Computer Architecture,Dr. Elena Petrova,R101,Seminar Room 1,Fri,08:00,09:30

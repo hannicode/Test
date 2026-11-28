@@ -130,7 +130,6 @@ export function loadData({ dataDir, outDir }) {
     locks: path.join(dataDir, "drafts", "locks.csv"),
     versions: path.join(dataDir, "schedules", "index.csv"),
     schedule: path.join(outDir, "schedule.csv"),
-    export: path.join(outDir, "schedule.html"),
   };
 
   const grid = readGrid(paths.grid);

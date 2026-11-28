@@ -12,8 +12,8 @@ const PALETTE = [
   "#E0F7FA", "#FFF9C4", "#E8EAF6", "#B2DFDB", "#F0F4C3",
 ];
 
-// Styles shared by the app and the exported schedule.html.
-const TIMETABLE_CSS = `
+// Styles shared by the app and the published reader site.
+export const TIMETABLE_CSS = `
 :root { --line: #e4e4e7; --muted: #71717a; }
 .timetable { display: grid; gap: 2px; margin: 4px 0 22px; }
 .timetable .cell { background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
@@ -44,18 +44,6 @@ const TIMETABLE_CSS = `
 .swatch-availability { background: rgba(16, 185, 129, .25); border: 1px dashed rgba(5, 150, 105, .6); }
 .swatch-preferred { background: rgba(59, 130, 246, .25); border: 1px dashed rgba(37, 99, 235, .6); }
 .swatch-warn { background: #fff; outline: 2px solid #f59e0b; outline-offset: -2px; }
-`;
-
-const EXPORT_CSS = `
-${TIMETABLE_CSS}
-body { margin: 0; background: #f5f6f8; color: #18181b; font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 14px; }
-main.export { max-width: 1400px; margin: 0 auto; padding: 24px; }
-h1 { font-size: 22px; margin: 0 0 4px; }
-.sub { color: var(--muted); margin: 0 0 18px; }
-.table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.table th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: #fafafb; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.table td { padding: 9px 12px; border-bottom: 1px solid var(--line); }
-.table tr:last-child td { border-bottom: none; }
 `;
 
 // ---------------------------------------------------------------------------
@@ -205,7 +193,7 @@ function navChips(data) {
 }
 
 function shell(ctx, body) {
-  const { data, saved, draft, active, title, msg, err, preview, exportExists } = ctx;
+  const { data, saved, draft, active, title, msg, err, preview, siteExists } = ctx;
   const chips = navChips(data);
   const timetableChip = draft
     ? `<span class="chip chip-warn">draft</span>`
@@ -249,8 +237,9 @@ function shell(ctx, body) {
       ${navItem("/versions", "Versions", "versions", active, `<span class="chip">${ctx.versions?.length ?? 0}</span>`)}
       ${navItem("/schedules", "Professor schedules", "schedules", active, "")}
 
-      <div class="nav-step"><span class="step-num">4</span>Export</div>
-      ${navItem("/export", "Export", "export", active, exportExists ? `<span class="chip chip-ok">ready</span>` : `<span class="chip">none</span>`)}
+      <div class="nav-step"><span class="step-num">4</span>Publish</div>
+      ${navItem("/publish", "Publish", "publish", active, draft ? `<span class="chip chip-warn">draft</span>` : saved ? `<span class="chip chip-ok">live</span>` : `<span class="chip">none</span>`)}
+      ${navItem("/export", "Reader site", "export", active, siteExists ? `<span class="chip chip-ok">ready</span>` : `<span class="chip">none</span>`)}
 
       <div class="nav-step"><span class="step-num">?</span>Help</div>
       ${navItem("/help", "How to use this", "help", active, "")}
@@ -449,7 +438,7 @@ function unplacedTable(unplaced) {
 // ---------------------------------------------------------------------------
 
 export function timetablePage(ctx) {
-  const { data, saved, draft, stale, draftStale, draftDiffers, locks, lockCheck } = ctx;
+  const { data, saved, draft, stale, draftStale, draftDiffers, locks, lockCheck, siteExists } = ctx;
   const current = draft ?? saved;
   const isDraft = Boolean(draft);
   const placements = current ? current.placements.map(flat) : [];
@@ -459,7 +448,7 @@ export function timetablePage(ctx) {
     `<form method="post" action="/generate"><button class="btn btn-primary">Generate schedule</button></form>`,
     isDraft ? `<a class="btn" href="/publish">Publish draft</a>` : "",
     current ? `<a class="btn" href="/versions">Versions</a>` : "",
-    saved ? `<form method="post" action="/export"><button class="btn">Export schedule.html</button></form>` : "",
+    siteExists ? `<a class="btn" href="/index.html">Open reader site</a>` : "",
   ]
     .filter(Boolean)
     .join("");
@@ -670,30 +659,30 @@ export function previewPage(ctx) {
 }
 
 export function exportPage(ctx) {
-  const { saved, draft, draftDiffers, exportExists } = ctx;
+  const { saved, draft, draftDiffers, siteExists } = ctx;
   const actions = saved
-    ? `<form method="post" action="/export"><button class="btn btn-primary">Write schedule.html</button></form>`
+    ? `<form method="post" action="/export"><button class="btn btn-primary">Write reader site</button></form>`
     : "";
 
   let body = pageHead(
-    "Export",
-    "A single self-contained HTML file you can double-click or share.",
+    "Reader site",
+    "The static timetable readers open — no login, no server.",
     actions
   );
 
   body += `<div class="panel">
     <h2>What gets written</h2>
-    <p><code>schedule.html</code> in the project folder. It has the styles inline, so it works without the server — double-click it, email it, or publish it with GitHub Pages.</p>
-    <p class="muted">It is generated from the <strong>published</strong> schedule (<code>schedule.csv</code>), not from a draft or an unsaved preview.</p>
+    <p><code>index.html</code> and <code>schedule.html</code> (the same page, so old links keep working) plus <code>assets/site.css</code>. They work on GitHub Pages, on a USB stick, or by double-clicking.</p>
+    <p class="muted">Built from the <strong>published</strong> schedule (<code>schedule.csv</code>), not from a draft or an unsaved preview. Writing the files does not push them — <a href="/publish">Publish</a> does both.</p>
   </div>`;
 
   if (draft && draftDiffers) {
-    body += `<div class="banner banner-warn">You have a draft that is not published yet. <a href="/publish">Publish it</a> before exporting to include those changes.</div>`;
+    body += `<div class="banner banner-warn">You have a draft that is not published yet. <a href="/publish">Publish it</a> before building the reader site to include those changes.</div>`;
   }
 
   if (!saved) {
     body += emptyState(
-      "No published schedule to export",
+      "No published schedule to show",
       "Generate a schedule, save it as a draft, then publish it first.",
       "/generate",
       "Go to Generate"
@@ -703,12 +692,12 @@ export function exportPage(ctx) {
       ${stat(saved.placements.length, "sections")}
       ${stat(dateLabel(saved.savedAt), "published")}
     </div>`;
-    body += `<div class="banner ${exportExists ? "banner-ok" : "banner-warn"}">
-      ${exportExists ? "schedule.html exists. Writing again replaces it." : "schedule.html has not been written yet."}
-    </div>`;
+    body += siteExists
+      ? `<div class="banner banner-ok">The reader site exists. Open <a href="/index.html">index.html</a> or <a href="/schedule.html">schedule.html</a>. Writing again replaces it.</div>`
+      : `<div class="banner banner-warn">The reader site has not been written yet.</div>`;
   }
 
-  return shell({ ...ctx, title: "Export", active: "export" }, body);
+  return shell({ ...ctx, title: "Reader site", active: "export" }, body);
 }
 
 // --- versions --------------------------------------------------------------
@@ -801,37 +790,102 @@ export function versionDeletePage(ctx) {
   });
 }
 
+function publishReport(report) {
+  const banner = report.ok
+    ? `<div class="banner banner-ok">Published ${escapeHtml(dateLabel(report.at))} — ${report.placed} class(es).</div>`
+    : `<div class="banner banner-warn">Files were written ${escapeHtml(dateLabel(report.at))}, but the push did not finish.</div>`;
+
+  const files = `<p class="muted">Wrote ${report.files
+    .map((file) => `<code>${escapeHtml(file)}</code>`)
+    .join(", ")}. Snapshot: <strong>${escapeHtml(report.version.name)}</strong>.</p>`;
+
+  const steps = report.git?.steps?.length
+    ? `<h3>Git</h3>${report.git.steps
+        .map(
+          (step) => `<div class="step">
+            <div><span class="chip ${step.ok ? "chip-ok" : "chip-warn"}">${step.ok ? "ok" : "failed"}</span>
+            <code>${escapeHtml(step.command)}</code></div>
+            ${step.output ? `<pre class="log">${escapeHtml(step.output)}</pre>` : ""}
+          </div>`
+        )
+        .join("")}`
+    : `<p class="muted">Git was skipped: ${escapeHtml(report.git?.reason || "not configured")}.</p>`;
+
+  const commands = `<h3>Run these by hand</h3>
+    <p class="muted">Open a terminal in the project folder, then run:</p>
+    <textarea readonly rows="${report.commands.length}">${escapeHtml(report.commands.join("\n"))}</textarea>`;
+
+  const link = report.pagesUrl
+    ? `<p>Reader site: <a href="${escapeHtml(report.pagesUrl)}" target="_blank" rel="noreferrer">${escapeHtml(report.pagesUrl)}</a> · <a href="/index.html">local copy</a></p>`
+    : `<p><a href="/index.html">Open the published site locally</a></p>`;
+
+  return `<div class="panel">
+    <h2>Last publish</h2>
+    ${banner}
+    ${files}
+    ${steps}
+    ${link}
+    ${report.git?.attempted && report.git?.ok ? "" : commands}
+  </div>`;
+}
+
 export function publishPage(ctx) {
-  const { data, draft, saved, draftDiffers } = ctx;
-  const placedIds = new Set(draft.placements.map((placement) => placement.section_id));
+  const { data, draft, preflight, lastPublish } = ctx;
+  const placedIds = new Set(draft.placements.map((row) => row.section_id));
   const unplaced = data.sections.filter((section) => !placedIds.has(section.section_id));
+  const checks = preflight?.checks ?? [];
 
-  const detail = `<p>Publish <strong>${draft.placements.length}</strong> section(s) from the draft${
-    data.settings.term_label ? ` for <strong>${escapeHtml(data.settings.term_label)}</strong>` : ""
-  }.</p>
-  <p>This replaces <code>schedule.csv</code> and saves a named snapshot you can restore later.${
-    unplaced.length > 0
-      ? ` <strong>${unplaced.length} section(s) are not in the draft</strong> and will not appear in the published timetable.`
-      : ""
-  }</p>
-  ${
-    saved
-      ? `<p class="muted">The current published timetable is from ${escapeHtml(dateLabel(saved.savedAt))}${
-          draftDiffers ? " and is different from this draft." : " and already matches this draft."
-        }</p>`
-      : `<p class="muted">Nothing is published yet.</p>`
-  }
-  <p class="muted">After publishing, use Export to write <code>schedule.html</code>.</p>`;
+  let body = pageHead(
+    "Publish",
+    "Write the reader site, then commit and push it.",
+    `<a class="btn" href="/timetable">Back to timetable</a>`
+  );
 
-  return confirmPage(ctx, {
-    title: "Publish draft",
-    subtitle: "Make this timetable the published one.",
-    detail,
-    action: "/publish",
-    cancelHref: "/timetable",
-    label: "Publish",
-    buttonClass: "btn-primary",
-  });
+  if (lastPublish) body += publishReport(lastPublish);
+
+  body += `<div class="stat-row">
+    ${stat(draft.placements.length, "in the draft")}
+    ${stat(unplaced.length, "not in the draft")}
+    ${stat(preflight?.warnings ?? 0, "warnings")}
+  </div>`;
+
+  body += `<div class="panel">
+    <h2>Pre-flight checklist</h2>
+    <p class="muted">Warnings do not stop you — they are things worth knowing before students see this.</p>
+    <table class="table">
+      <thead><tr><th></th><th>Check</th></tr></thead>
+      <tbody>
+        ${checks
+          .map(
+            (check) => `<tr>
+              <td><span class="chip ${check.ok ? "chip-ok" : "chip-warn"}">${check.ok ? "ok" : "check"}</span></td>
+              <td><strong>${escapeHtml(check.label)}</strong>${
+                check.detail ? `<div class="hint">${escapeHtml(check.detail)}</div>` : ""
+              }</td>
+            </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>
+  </div>`;
+
+  body += `<div class="panel">
+    <h2>What publish does</h2>
+    <ol class="steps-list">
+      <li>Writes <code>schedule.csv</code> and saves a named snapshot.</li>
+      <li>Writes <code>index.html</code>, <code>schedule.html</code> and <code>assets/site.css</code> — the reader site.</li>
+      <li>Stages only those files, commits them and pushes <code>main</code>.</li>
+    </ol>
+    ${
+      preflight?.pagesUrl
+        ? `<p>Reader address after Pages is enabled: <a href="${escapeHtml(preflight.pagesUrl)}" target="_blank" rel="noreferrer">${escapeHtml(preflight.pagesUrl)}</a></p>`
+        : ""
+    }
+    <p class="muted">GitHub Pages only needs to be enabled once: repository Settings → Pages → Deploy from branch → <code>main</code> / root. The app cannot enable it for you.</p>
+    <form method="post" action="/publish"><button class="btn btn-primary btn-lg">Publish and push</button></form>
+  </div>`;
+
+  return shell({ ...ctx, title: "Publish", active: "publish" }, body);
 }
 
 // --- sections --------------------------------------------------------------
@@ -1511,9 +1565,10 @@ export function helpPage(ctx) {
       <p>Open a professor's schedule to see their availability and preferred windows shaded, with classes outside them flagged.</p>
     </div>
     <div class="panel">
-      <h2>4 · Publish and export</h2>
-      <p><strong>Publish draft</strong> writes the published timetable to <code>schedule.csv</code> and saves a snapshot. This is what readers see; the draft stays private.</p>
-      <p><strong>Export</strong> writes <code>schedule.html</code>: one self-contained file you can double-click or share. It is built from the published schedule, not from a draft or an unsaved preview.</p>
+      <h2>4 · Publish and share</h2>
+      <p><strong>Publish</strong> writes the published timetable to <code>schedule.csv</code>, saves a snapshot, builds the static reader site and pushes it to git. A checklist warns about anything worth fixing first; warnings never stop you.</p>
+      <p><strong>Reader site</strong> rebuilds <code>index.html</code>, <code>schedule.html</code> and <code>assets/site.css</code> without pushing. Readers open those files; there is no login and nothing to install.</p>
+      <p class="muted">GitHub Pages only needs to be enabled once: repository Settings → Pages → Deploy from branch → <code>main</code> / root.</p>
     </div>
     <div class="panel">
       <h2>Backups</h2>
@@ -1535,7 +1590,9 @@ export function helpPage(ctx) {
           <tr><td><code>data/drafts/locks.csv</code></td><td>Classes pinned in place for the next generate</td></tr>
           <tr><td><code>data/schedules/</code></td><td>Named snapshots and their index</td></tr>
           <tr><td><code>schedule.csv</code></td><td>The published schedule</td></tr>
-          <tr><td><code>schedule.html</code></td><td>The exported, shareable timetable</td></tr>
+          <tr><td><code>index.html</code></td><td>The published reader site</td></tr>
+          <tr><td><code>schedule.html</code></td><td>The same reader site, so old links keep working</td></tr>
+          <tr><td><code>assets/site.css</code></td><td>Styles for the reader site</td></tr>
         </tbody>
       </table>
     </div>
@@ -1587,29 +1644,4 @@ export function errorPage(ctx, message) {
     `<div class="banner banner-err"><pre>${escapeHtml(message)}</pre></div>` +
     `<a class="btn" href="/timetable">Back to timetable</a>`;
   return shell({ ...ctx, title: "Error", active: "" }, body);
-}
-
-// ---------------------------------------------------------------------------
-// The exported file
-// ---------------------------------------------------------------------------
-
-export function exportDocument(grid, placements) {
-  const flatPlacements = placements.map(flat);
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Class schedule</title>
-<style>${EXPORT_CSS}</style>
-</head>
-<body>
-<main class="export">
-  <h1>Class schedule</h1>
-  <p class="sub">Generated ${escapeHtml(new Date().toLocaleString())}</p>
-  ${timetableHtml(grid, flatPlacements)}
-  ${scheduleTable(flatPlacements)}
-</main>
-</body>
-</html>`;
 }

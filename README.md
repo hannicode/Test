@@ -41,9 +41,9 @@ The sidebar is the flow, in four numbered steps:
 3. **Review** — save the result as a **draft**, inspect it, click classes to
    lock them, and regenerate. Named **versions** are checkpoints you can
    restore.
-4. **Publish and export** — publish the draft to `schedule.csv`, then write
-   `schedule.html`, a single self-contained file you can double-click, email,
-   or publish.
+4. **Publish and share** — publish the draft: it writes `schedule.csv`, builds
+   the static reader site (`index.html`, `schedule.html`, `assets/site.css`),
+   commits those files and pushes. Readers need no login and no server.
 
 A generated preview lives only in the server's memory. Press **Save as draft**
 to write it to `data/drafts/current.csv`; nothing becomes visible to readers
@@ -61,9 +61,11 @@ The app keeps three states:
 | **Draft** | `data/drafts/current.csv` | only you — the working copy |
 | **Published** | `schedule.csv` | readers; this is the real timetable |
 
-**Publishing** copies the draft to `schedule.csv` and saves a named snapshot.
-It asks for confirmation first and tells you how many sections are in the draft
-and how many are missing.
+**Publishing** copies the draft to `schedule.csv`, saves a named snapshot, builds
+the reader site and pushes it. A pre-flight checklist warns about unplaced
+sections, deleted rooms, missing settings and git problems; warnings never stop
+you. If the push cannot finish, the page shows the exact commands to run by
+hand.
 
 **Locking.** On the draft timetable, click a class (on the grid or in the table)
 to pin it. Generate again: locked classes stay exactly where they are, and the
@@ -116,6 +118,8 @@ every remaining slot clashing with something else).
 | `validate.js` | Rules that decide whether a form may be saved |
 | `import.js` | Parsing, merging and diffing an imported CSV |
 | `backup.js` | The one-file backup and its restore |
+| `site.js` | Builds the static reader site (`index.html`, CSS) |
+| `publish.js` | Pre-flight checks, git commands and the Pages address |
 | `upload.js` | Reading a file out of a form |
 | `test.js` | The checks behind `npm test` |
 | `web/app.css` | Styling for the app shell |
@@ -123,7 +127,9 @@ every remaining slot clashing with something else).
 | `data/drafts/` | Private working draft and locks (not committed) |
 | `data/schedules/` | Named snapshots and their index |
 | `schedule.csv` | The published schedule |
-| `schedule.html` | The exported, shareable timetable |
+| `index.html` | The published reader site |
+| `schedule.html` | The same reader site, so old links keep working |
+| `assets/site.css` | Styles for the reader site |
 
 The app writes each CSV safely: a temporary file is written first, the previous
 version is kept as `.bak`, and only then does it replace the original.
@@ -192,13 +198,14 @@ The zero-tech option still works: copy the whole `data` folder somewhere safe.
 npm test
 ```
 
-Eighteen checks, no framework: the data folder is complete, every section points
-at a real professor and subject, the solver places all 60 sections without
-breaking a hard constraint, a locked section stays pinned, the forms refuse
-broken input, CSV survives commas and quotes, an import changes nothing until
-it is applied, a backup restores exactly what it captured, a version round-trips
-through its index, and every page answers. It never saves anything, so it is
-safe to run at any time.
+Twenty-one checks, no framework: the data folder is complete, every section
+points at a real professor and subject, the solver places all 60 sections
+without breaking a hard constraint, a locked section stays pinned, the forms
+refuse broken input, CSV survives commas and quotes, an import changes nothing
+until it is applied, a backup restores exactly what it captured, a version
+round-trips through its index, the reader site is static and complete, the
+pre-flight checklist blocks only a missing draft, and every page answers. It
+never writes to the repo, so it is safe to run at any time.
 
 ---
 
@@ -333,19 +340,63 @@ reason for each one.
 
 ---
 
-## Publishing the timetable
+## Publishing the reader site
 
-In the app, **Publish draft** makes the draft the real timetable (`schedule.csv`)
-and saves a snapshot. **Export** then writes `schedule.html`.
+**Publish** (step 4) does four things:
 
-`schedule.html` is fully self-contained (styles inline, no scripts). To put it
-online with GitHub Pages, commit it and enable Pages for your repository
-(Settings → Pages → Deploy from branch → `main` / root). The file is then
-available at:
+1. Writes `schedule.csv` — the published timetable.
+2. Saves a snapshot under `data/schedules/` and marks it current.
+3. Writes the reader site: `index.html`, `schedule.html` (the same page, so old
+   links keep working) and `assets/site.css`.
+4. Stages only those files, commits them, and pushes `main`.
+
+The reader site is plain HTML and CSS: the timetable grid, all classes, a view
+by professor and a view by room. It has no login, no scripts and no server, so
+it works on GitHub Pages, on a USB stick, or by double-clicking.
+
+### Pre-flight checklist
+
+Before publishing, the page checks the things that usually cause a bad publish:
+
+- every section in the data is in the draft;
+- every class and room in the draft still exists;
+- instructors and course ids point at real files;
+- school name and term are set;
+- the draft is newer than the data;
+- every lock still fits;
+- the folder is a git repository with an `origin` remote, on `main`.
+
+Only a missing draft blocks. Everything else is a warning, because the registrar
+may know something the app does not. The page also tells you how many classes
+would be published and how many are missing.
+
+### Git and GitHub Pages
+
+Publishing needs a git repository with a remote named `origin`, and credentials
+that work without prompting. The page shows every command and its output. If
+the push cannot finish, run the three commands shown on the page by hand:
+
+```powershell
+git add -- schedule.csv index.html schedule.html assets data/schedules
+git commit -m "Publish Fall 2026 — 2026-09-01"
+git push origin main
+```
+
+GitHub Pages only needs to be enabled once: repository **Settings → Pages →
+Deploy from branch → `main` / root**. After that the site is at:
 
 ```
-https://<your-username>.github.io/<repository>/schedule.html
+https://<your-username>.github.io/<repository>/
 ```
+
+`schedule.html` keeps working, so links you shared before still open the
+timetable.
+
+### Reader site without git
+
+**Reader site** (also step 4) rebuilds `index.html`, `schedule.html` and
+`assets/site.css` from the published schedule without committing or pushing.
+Useful for checking the result locally, or copying the files to a USB stick.
 
 ---
 

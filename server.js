@@ -62,6 +62,14 @@ import {
   applyRestore,
   describeBundle,
 } from "./backup.js";
+import { writeTextAtomic } from "./csv.js";
+import { buildSite } from "./site.js";
+import {
+  buildPreflight,
+  inspectGit,
+  gitPublish,
+  manualCommands,
+} from "./publish.js";
 import * as pages from "./pages.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -99,6 +107,10 @@ let preview = null;
 // memory only, and lost on restart, which is the safest place for it.
 let pendingImport = null;
 let pendingRestore = null;
+
+// The most recent publish, so the page can show the git commands and their
+// output. It is a report, not a source of truth; the files are on disk.
+let lastPublish = null;
 
 /** Destination list page after importing each kind. */
 const IMPORT_BACK = {
@@ -179,7 +191,7 @@ function baseContext(extra = {}) {
     stale: isStale(data, saved),
     draftStale: isStale(data, draft),
     draftDiffers: Boolean(draft && saved && !samePlacements(draft.placements, saved.placements)),
-    exportExists: fs.existsSync(data.paths.export),
+    siteExists: fs.existsSync(path.join(OUT_DIR, "index.html")),
     budgetMs: BUDGET_MS,
     ...extra,
   };
@@ -510,33 +522,113 @@ route("POST", "/versions/delete", async ({ req }) => {
   return flash("/versions", `Deleted “${version.name}”.`);
 });
 
-route("GET", "/publish", () => {
-  const ctx = baseContext({ title: "Publish", active: "timetable" });
+route("GET", "/publish", async ({ query }) => {
+  const ctx = baseContext({
+    title: "Publish",
+    active: "timetable",
+    msg: query.get("msg"),
+    err: query.get("err"),
+  });
   if (!ctx.draft) {
     return { redirect: `/timetable?err=${encodeURIComponent("There is no draft to publish.")}` };
   }
-  return { html: pages.publishPage(ctx) };
+
+  const git = await inspectGit(OUT_DIR);
+  const preflight = buildPreflight({ ...ctx, git });
+  return { html: pages.publishPage({ ...ctx, preflight, lastPublish }) };
 });
 
-route("POST", "/publish", () => {
+route("POST", "/publish", async () => {
   const data = load();
   const draft = readDraft(data);
   if (!draft) {
     return { redirect: `/timetable?err=${encodeURIComponent("There is no draft to publish.")}` };
   }
 
+  const generatedAt = new Date();
+  const siteFiles = buildSite({ data, placements: draft.placements, generatedAt });
+
+  // Write the reader site first: if a template ever throws, nothing is
+  // published and the previous site stays intact.
+  for (const [relative, text] of Object.entries(siteFiles)) {
+    writeTextAtomic(path.join(OUT_DIR, relative), text);
+  }
+
   saveSchedule(data, draft.placements);
 
-  const placedIds = new Set(draft.placements.map((placement) => placement.section_id));
+  const placedIds = new Set(draft.placements.map((row) => row.section_id));
   const unplaced = data.sections.filter((section) => !placedIds.has(section.section_id)).length;
-  const name = `Published ${data.settings.term_label || "schedule"} — ${new Date().toLocaleString()}`;
+  const name = `Published ${data.settings.term_label || "schedule"} — ${generatedAt.toLocaleString()}`;
   const version = saveVersion(data, { name, placements: draft.placements, unplaced });
   setCurrentVersion(data, version.file);
 
-  return flash(
-    "/timetable",
-    `Published ${draft.placements.length} sections. Snapshot “${version.name}” saved.`
-  );
+  const paths = ["schedule.csv", "index.html", "schedule.html", "assets"];
+  const schedulesRelative = path.relative(OUT_DIR, data.paths.schedules).split(path.sep).join("/");
+  if (schedulesRelative && !schedulesRelative.startsWith("..")) paths.push(schedulesRelative);
+
+  const message = `Publish ${data.settings.term_label || "timetable"} — ${generatedAt
+    .toISOString()
+    .slice(0, 10)}`;
+
+  const git = await inspectGit(OUT_DIR);
+  let gitResult;
+  if (git.isRepo && git.remote) {
+    gitResult = { attempted: true, skipped: false, ...(await gitPublish(OUT_DIR, {
+      paths,
+      message,
+      branch: git.branch,
+    })) };
+  } else {
+    gitResult = {
+      attempted: false,
+      skipped: true,
+      reason: git.isRepo ? "no remote named origin" : "not a git repository",
+      steps: [],
+    };
+  }
+
+  lastPublish = {
+    at: generatedAt,
+    placed: draft.placements.length,
+    unplaced,
+    version,
+    files: Object.keys(siteFiles),
+    git: gitResult,
+    commands: manualCommands({ paths, message, branch: git.branch }),
+    pagesUrl: git.pagesUrl,
+    ok: !gitResult.attempted || gitResult.ok,
+    message,
+  };
+
+  if (gitResult.attempted && gitResult.ok) {
+    return flash("/publish", "Published and pushed. The reader site is up to date.");
+  }
+  if (gitResult.attempted) {
+    return flash("/publish", "Published locally, but the push did not finish. The exact commands are on this page.");
+  }
+  return flash("/publish", `Published locally. Git was skipped (${gitResult.reason}); the commands are on this page.`);
+});
+
+// --- the published reader site, served locally ------------------------------
+
+function readSiteFile(name) {
+  const file = path.join(OUT_DIR, name);
+  return fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+}
+
+route("GET", "/index.html", () => {
+  const html = readSiteFile("index.html");
+  return html === null ? notFound() : { html };
+});
+
+route("GET", "/schedule.html", () => {
+  const html = readSiteFile("schedule.html");
+  return html === null ? notFound() : { html };
+});
+
+route("GET", "/assets/site.css", () => {
+  const css = readSiteFile(path.join("assets", "site.css"));
+  return css === null ? notFound() : { css };
 });
 
 route("GET", "/export", ({ query }) => ({
@@ -551,14 +643,18 @@ route("GET", "/export", ({ query }) => ({
 route("POST", "/export", () => {
   const data = load();
   const saved = readSavedSchedule(OUT_DIR);
-  if (!saved) return { redirect: `/export?err=${encodeURIComponent("There is no saved schedule to export.")}` };
+  if (!saved) return { redirect: `/export?err=${encodeURIComponent("There is no published schedule to export.")}` };
 
-  fs.writeFileSync(
-    data.paths.export,
-    pages.exportDocument(data.grid, saved.placements),
-    "utf8"
-  );
-  return flash("/export", "schedule.html written — double-click it or share it.");
+  const siteFiles = buildSite({
+    data,
+    placements: saved.placements,
+    generatedAt: saved.savedAt,
+  });
+  for (const [relative, text] of Object.entries(siteFiles)) {
+    writeTextAtomic(path.join(OUT_DIR, relative), text);
+  }
+
+  return flash("/export", "Reader site written — open index.html.");
 });
 
 // --- sections --------------------------------------------------------------

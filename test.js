@@ -18,10 +18,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadData, applySubjectDefaults } from "./data.js";
+import { loadData, applySubjectDefaults, readSavedSchedule } from "./data.js";
 import { solve, checkLocks } from "./solver.js";
 import { validateSection, validateRoom, validateGrid } from "./validate.js";
 import { objectsToCsv, csvToObjects } from "./csv.js";
+import { pagesUrl, buildPreflight } from "./publish.js";
+import { buildSite } from "./site.js";
 import { startServer } from "./server.js";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -456,9 +458,10 @@ test("a version round-trips through the index", async () => {
       },
     ];
 
+    const before = readVersions(scratch).length;
     const version = saveVersion(scratch, { name: "Checkpoint / one", placements, unplaced: 2 });
     assert.equal(version.file, "checkpoint-one.csv", "the file name was not made safe");
-    assert.equal(readVersions(scratch).length, 1, "the index did not gain the version");
+    assert.equal(readVersions(scratch).length, before + 1, "the index did not gain the version");
 
     const back = readVersion(scratch, version);
     assert.equal(back.placements.length, 1, "the snapshot lost its row");
@@ -466,14 +469,87 @@ test("a version round-trips through the index", async () => {
     assert.equal(back.placements[0].start, 420, "the snapshot lost its start time");
 
     setCurrentVersion(scratch, version.file);
-    assert.equal(readVersions(scratch)[0].current, true, "the current flag was not set");
+    assert.equal(
+      readVersions(scratch).find((row) => row.file === version.file)?.current,
+      true,
+      "the current flag was not set"
+    );
 
     deleteVersion(scratch, version.file);
-    assert.equal(readVersions(scratch).length, 0, "the index kept a deleted version");
+    assert.equal(readVersions(scratch).length, before, "the index kept a deleted version");
     assert.equal(fs.existsSync(path.join(dir, "schedules", version.file)), false, "the file was left behind");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Publishing
+// ---------------------------------------------------------------------------
+
+test("the Pages address is derived from a GitHub remote", () => {
+  assert.equal(
+    pagesUrl("https://github.com/hannicode/Test.git"),
+    "https://hannicode.github.io/Test/"
+  );
+  assert.equal(
+    pagesUrl("git@github.com:someone/scheduler.git"),
+    "https://someone.github.io/scheduler/"
+  );
+  assert.equal(pagesUrl("https://gitlab.com/a/b.git"), "", "a non-GitHub remote got a Pages URL");
+});
+
+test("the reader site is static and complete", () => {
+  const saved = readSavedSchedule(ROOT);
+  assert.ok(saved, "schedule.csv is missing, so there is nothing to publish");
+
+  const site = buildSite({
+    data,
+    placements: saved.placements,
+    generatedAt: new Date("2026-09-01T10:00:00Z"),
+  });
+
+  assert.deepEqual(Object.keys(site).sort(), ["assets/site.css", "index.html", "schedule.html"]);
+  const index = site["index.html"];
+  assert.ok(index.includes(data.settings.school_name), "the site lost the school name");
+  assert.ok(index.includes(data.settings.term_label), "the site lost the term");
+  assert.ok(index.includes("By professor"), "the site has no professor view");
+  assert.ok(index.includes("By room"), "the site has no room view");
+  assert.ok(!index.includes("<form"), "the reader site contains a form");
+  assert.equal(site["schedule.html"], index, "the old link is not the same page");
+  assert.ok(site["assets/site.css"].includes(".timetable"), "the site CSS is missing the grid");
+});
+
+test("pre-flight blocks without a draft and warns without git", () => {
+  const empty = buildPreflight({ data, draft: null, git: { isRepo: false } });
+  assert.equal(empty.blocked, true, "publishing without a draft was allowed");
+
+  const draft = {
+    placements: solution.map((placement) => ({
+      section_id: placement.section.section_id,
+      room_id: placement.room.id,
+      day: placement.day,
+      start: placement.start,
+    })),
+  };
+  const result = buildPreflight({
+    data,
+    draft,
+    locks: [],
+    lockCheck: { dropped: [] },
+    draftStale: false,
+    git: { isRepo: false, branch: "", remote: "", pagesUrl: "" },
+  });
+
+  assert.equal(result.blocked, false, "a complete draft was blocked");
+  assert.ok(
+    result.checks.some((check) => check.ok && check.label.includes("Every section is in the draft")),
+    "the complete draft did not pass the section check"
+  );
+  assert.ok(
+    result.checks.some((check) => !check.ok && check.label.includes("git repository")),
+    "a missing git repository was not reported"
+  );
 });
 
 // ---------------------------------------------------------------------------
